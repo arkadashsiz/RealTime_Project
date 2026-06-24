@@ -1,5 +1,338 @@
-error: can't find bin `adas_scheduler` at path `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\src\main.rs`
- --> C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\Cargo.toml
-error: can't find bin `adas_scheduler` at path `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\src\main.rs`
- --> C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\Cargo.toml
-error: could not compile due to 2 previous target resolution errors
+   0.069319400s  INFO prepare_target{force=false package_id=adas_scheduler v0.1.0 (C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project) target="adas_scheduler"}: cargo::core::compiler::fingerprint: fingerprint error for adas_scheduler v0.1.0 (C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project)/Check { test: false }/TargetInner { name: "adas_scheduler", doc: true, ..: with_path("C:\\Users\\arkadash\\Desktop\\uni\\6\\RT-systems\\project\\RealTime_Project\\src\\main.rs", Edition2021) }
+   0.069371700s  INFO prepare_target{force=false package_id=adas_scheduler v0.1.0 (C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project) target="adas_scheduler"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\adas_scheduler-60eed5af78bdf846\bin-adas_scheduler`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_libgit2_prerelease
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: git_midx_writer_dump
+  17: git_filter_source_repo
+  18: git_midx_writer_dump
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+   0.087348800s  INFO prepare_target{force=false package_id=csv v1.4.0 target="csv"}: cargo::core::compiler::fingerprint: fingerprint error for csv v1.4.0/Check { test: false }/TargetInner { benched: false, ..: lib_target("csv", ["lib"], "C:\\Users\\arkadash\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\csv-1.4.0\\src\\lib.rs", Edition2021) }
+   0.087384600s  INFO prepare_target{force=false package_id=csv v1.4.0 target="csv"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\csv-316189ffd9cab183\lib-csv`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_libgit2_prerelease
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: git_midx_writer_dump
+  18: git_filter_source_repo
+  19: git_midx_writer_dump
+  20: BaseThreadInitThunk
+  21: RtlUserThreadStart
+   0.088555900s  INFO prepare_target{force=false package_id=serde_core v1.0.228 target="serde_core"}: cargo::core::compiler::fingerprint: fingerprint error for serde_core v1.0.228/Check { test: false }/TargetInner { ..: lib_target("serde_core", ["lib"], "C:\\Users\\arkadash\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\serde_core-1.0.228\\src\\lib.rs", Edition2021) }
+   0.088577000s  INFO prepare_target{force=false package_id=serde_core v1.0.228 target="serde_core"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\serde_core-0f59e9c7c5ffc437\lib-serde_core`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_filter_source_repo
+  13: git_libgit2_prerelease
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: git_midx_writer_dump
+  19: git_filter_source_repo
+  20: git_midx_writer_dump
+  21: BaseThreadInitThunk
+  22: RtlUserThreadStart
+   0.089998300s  INFO prepare_target{force=false package_id=rand v0.8.6 target="rand"}: cargo::core::compiler::fingerprint: fingerprint error for rand v0.8.6/Check { test: false }/TargetInner { ..: lib_target("rand", ["lib"], "C:\\Users\\arkadash\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\rand-0.8.6\\src\\lib.rs", Edition2018) }
+   0.090016300s  INFO prepare_target{force=false package_id=rand v0.8.6 target="rand"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\rand-12538f6e006b5f96\lib-rand`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_libgit2_prerelease
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: git_midx_writer_dump
+  18: git_filter_source_repo
+  19: git_midx_writer_dump
+  20: BaseThreadInitThunk
+  21: RtlUserThreadStart
+   0.090600700s  INFO prepare_target{force=false package_id=rand_chacha v0.3.1 target="rand_chacha"}: cargo::core::compiler::fingerprint: fingerprint error for rand_chacha v0.3.1/Check { test: false }/TargetInner { name_inferred: true, ..: lib_target("rand_chacha", ["lib"], "C:\\Users\\arkadash\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\rand_chacha-0.3.1\\src\\lib.rs", Edition2018) }
+   0.090629400s  INFO prepare_target{force=false package_id=rand_chacha v0.3.1 target="rand_chacha"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\rand_chacha-0ecf90218dd66e07\lib-rand_chacha`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_filter_source_repo
+  13: git_libgit2_prerelease
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: git_midx_writer_dump
+  19: git_filter_source_repo
+  20: git_midx_writer_dump
+  21: BaseThreadInitThunk
+  22: RtlUserThreadStart
+   0.091251400s  INFO prepare_target{force=false package_id=ppv-lite86 v0.2.21 target="ppv_lite86"}: cargo::core::compiler::fingerprint: fingerprint error for ppv-lite86 v0.2.21/Check { test: false }/TargetInner { ..: lib_target("ppv_lite86", ["lib"], "C:\\Users\\arkadash\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\ppv-lite86-0.2.21\\src\\lib.rs", Edition2021) }
+   0.091276700s  INFO prepare_target{force=false package_id=ppv-lite86 v0.2.21 target="ppv_lite86"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\ppv-lite86-72daf96e75ac9bfd\lib-ppv_lite86`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_filter_source_repo
+  13: git_filter_source_repo
+  14: git_libgit2_prerelease
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: git_midx_writer_dump
+  20: git_filter_source_repo
+  21: git_midx_writer_dump
+  22: BaseThreadInitThunk
+  23: RtlUserThreadStart
+   0.091701400s  INFO prepare_target{force=false package_id=zerocopy v0.8.52 target="zerocopy"}: cargo::core::compiler::fingerprint: fingerprint error for zerocopy v0.8.52/Check { test: false }/TargetInner { ..: lib_target("zerocopy", ["lib"], "C:\\Users\\arkadash\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\zerocopy-0.8.52\\src\\lib.rs", Edition2021) }
+   0.091719500s  INFO prepare_target{force=false package_id=zerocopy v0.8.52 target="zerocopy"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\zerocopy-efc68363e34a0c9a\lib-zerocopy`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_filter_source_repo
+  13: git_filter_source_repo
+  14: git_filter_source_repo
+  15: git_libgit2_prerelease
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: <unknown>
+  20: git_midx_writer_dump
+  21: git_filter_source_repo
+  22: git_midx_writer_dump
+  23: BaseThreadInitThunk
+  24: RtlUserThreadStart
+   0.093906100s  INFO prepare_target{force=false package_id=serde v1.0.228 target="serde"}: cargo::core::compiler::fingerprint: fingerprint error for serde v1.0.228/Check { test: false }/TargetInner { ..: lib_target("serde", ["lib"], "C:\\Users\\arkadash\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\serde-1.0.228\\src\\lib.rs", Edition2021) }
+   0.093929800s  INFO prepare_target{force=false package_id=serde v1.0.228 target="serde"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\serde-6aa99e5af65ef08d\lib-serde`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_libgit2_prerelease
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: git_midx_writer_dump
+  18: git_filter_source_repo
+  19: git_midx_writer_dump
+  20: BaseThreadInitThunk
+  21: RtlUserThreadStart
+   0.095331300s  INFO prepare_target{force=false package_id=serde_derive v1.0.228 target="serde_derive"}: cargo::core::compiler::fingerprint: fingerprint error for serde_derive v1.0.228/Build/TargetInner { for_host: true, proc_macro: true, ..: lib_target("serde_derive", ["proc-macro"], "C:\\Users\\arkadash\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\serde_derive-1.0.228\\src\\lib.rs", Edition2021) }
+   0.095351700s  INFO prepare_target{force=false package_id=serde_derive v1.0.228 target="serde_derive"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\serde_derive-97d0cf085f21056d\lib-serde_derive`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_filter_source_repo
+  13: git_libgit2_prerelease
+  14: <unknown>
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: git_midx_writer_dump
+  19: git_filter_source_repo
+  20: git_midx_writer_dump
+  21: BaseThreadInitThunk
+  22: RtlUserThreadStart
+   0.098614100s  INFO prepare_target{force=false package_id=syn v2.0.118 target="syn"}: cargo::core::compiler::fingerprint: fingerprint error for syn v2.0.118/Build/TargetInner { ..: lib_target("syn", ["lib"], "C:\\Users\\arkadash\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\syn-2.0.118\\src\\lib.rs", Edition2021) }
+   0.098635700s  INFO prepare_target{force=false package_id=syn v2.0.118 target="syn"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\syn-20b114d26892a1f0\lib-syn`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_filter_source_repo
+  12: git_filter_source_repo
+  13: git_filter_source_repo
+  14: git_libgit2_prerelease
+  15: <unknown>
+  16: <unknown>
+  17: <unknown>
+  18: <unknown>
+  19: git_midx_writer_dump
+  20: git_filter_source_repo
+  21: git_midx_writer_dump
+  22: BaseThreadInitThunk
+  23: RtlUserThreadStart
+   0.099108800s  INFO prepare_target{force=false package_id=adas_scheduler v0.1.0 (C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project) target="adas_scheduler"}: cargo::core::compiler::fingerprint: fingerprint error for adas_scheduler v0.1.0 (C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project)/Check { test: true }/TargetInner { name: "adas_scheduler", doc: true, ..: with_path("C:\\Users\\arkadash\\Desktop\\uni\\6\\RT-systems\\project\\RealTime_Project\\src\\main.rs", Edition2021) }
+   0.099128100s  INFO prepare_target{force=false package_id=adas_scheduler v0.1.0 (C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project) target="adas_scheduler"}: cargo::core::compiler::fingerprint:     err: failed to read `C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project\target\debug\.fingerprint\adas_scheduler-91e2254e17d194f7\test-bin-adas_scheduler`
+
+Caused by:
+    The system cannot find the file specified. (os error 2)
+
+Stack backtrace:
+   0: git_midx_writer_dump
+   1: git_midx_writer_dump
+   2: git_midx_writer_dump
+   3: git_midx_writer_dump
+   4: git_filter_source_repo
+   5: git_filter_source_repo
+   6: git_filter_source_repo
+   7: git_filter_source_repo
+   8: git_filter_source_repo
+   9: git_filter_source_repo
+  10: git_filter_source_repo
+  11: git_libgit2_prerelease
+  12: <unknown>
+  13: <unknown>
+  14: <unknown>
+  15: <unknown>
+  16: git_midx_writer_dump
+  17: git_filter_source_repo
+  18: git_midx_writer_dump
+  19: BaseThreadInitThunk
+  20: RtlUserThreadStart
+    Checking zerocopy v0.8.52
+    Checking serde_core v1.0.228
+   Compiling syn v2.0.118
+   Compiling serde_derive v1.0.228
+    Checking csv v1.4.0
+    Checking ppv-lite86 v0.2.21
+    Checking rand_chacha v0.3.1
+    Checking rand v0.8.6
+    Checking serde v1.0.228
+    Checking adas_scheduler v0.1.0 (C:\Users\arkadash\Desktop\uni\6\RT-systems\project\RealTime_Project)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.91s
