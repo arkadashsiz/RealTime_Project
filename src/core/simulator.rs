@@ -1,40 +1,5 @@
-//! simulator.rs
-//!
-//! Discrete-time, tick-based simulator implementing the proposed
-//! "Relaxation" scheduling algorithm for ADAS aperiodic tasks on a
-//! homogeneous multi-core processor.
-//!
-//! Design summary:
-//!   - Time advances in fixed 1-unit ticks (1 tick = 10ms real time).
-//!   - Each core can run at most one task per tick.
-//!   - A task already running on a core stays there unless preempted
-//!     (no task migrates between cores mid-execution).
-//!   - At every tick we: (1) admit newly arrived tasks into the ready
-//!     queue, (2) drop any task whose laxity has gone negative,
-//!     (3) compute Relaxation R for everything in the ready queue and
-//!     rank ascending, (4) decide preemptions per core, (5) assign
-//!     waiting tasks to free cores, (6) execute one tick of work on
-//!     every busy, non-switching core, (7) record completions.
-//!
-//! All task references inside this module use the task's **index**
-//! into the caller-provided `tasks` slice (not `task.id`) as the
-//! identity used for core occupancy bookkeeping. `task.id` is only
-//! used for human-readable event logging.
-//!
-//! CORE ASSIGNMENT NOTE: the spec describes a single combined ready
-//! queue sorted by R but does not specify how tasks are distributed
-//! across multiple cores. We adopt a global-queue convention (the
-//! same style as "EDF-Global"): at each tick, free cores pull the
-//! most eligible (lowest-R) waiting tasks from the front of the
-//! ranked queue, and a busy core's incumbent is only swapped out when
-//! the preemption condition below is met for that specific core.
-
 use crate::core::task::{normalize_laxities, relaxation, theta, Task, Weather};
 
-/// A trace event emitted by the simulator for later analysis /
-/// debugging. Full per-task results are read off the `Task` structs
-/// themselves after the run completes; this trace is supplementary
-/// (e.g. for building Gantt-style charts in Phase 2).
 #[derive(Debug, Clone)]
 pub enum SimEvent {
     Started { time: f64, task_id: usize, core: usize, preemptive: bool },
@@ -48,9 +13,6 @@ pub enum DropReason {
     NegativeLaxity,
 }
 
-/// State of one processor core during simulation. `running` holds
-/// the **index into the tasks slice** of the task currently occupying
-/// this core, if any.
 #[derive(Debug, Clone)]
 struct Core {
     running: Option<usize>,
@@ -63,10 +25,6 @@ pub struct SimConfig {
     pub weather: Weather,
     pub tightness: f64,
     pub context_switch_cost: f64,
-    /// "Critical coefficient" C used in the preemption-severity test.
-    /// The spec uses this symbol without specifying a concrete value;
-    /// exposed here as a tunable constant. Documented assumption —
-    /// see README / project plan, flagged ambiguity #2.
     pub critical_coefficient: f64,
 }
 
@@ -97,10 +55,6 @@ pub struct SimResult {
     pub tasks_by_priority: [usize; 5],
 }
 
-/// Runs one full simulation episode over `tasks` (already generated,
-/// with deadlines already computed) using the proposed Relaxation
-/// scheduler. Mutates `tasks` in place to record start/finish/drop
-/// bookkeeping, and returns the event trace plus aggregate stats.
 pub fn run_simulation(tasks: &mut [Task], config: &SimConfig) -> (Vec<SimEvent>, SimResult) {
     let mut events = Vec::new();
     let mut cores: Vec<Core> = (0..config.num_cores).map(|_| Core { running: None }).collect();
@@ -116,24 +70,18 @@ pub fn run_simulation(tasks: &mut [Task], config: &SimConfig) -> (Vec<SimEvent>,
     });
     let mut next_arrival_ptr = 0usize;
 
-    // Ready queue: indices into `tasks` of admitted tasks that are
-    // neither completed nor dropped. This includes tasks currently
-    // running on a core (kept in the queue for ranking purposes, but
-    // skipped when assigning *free* cores since they're already busy
-    // elsewhere).
+
     let mut ready_queue: Vec<usize> = Vec::new();
 
     let mut t: f64 = 0.0;
     let max_deadline = tasks.iter().fold(0.0_f64, |acc, tk| acc.max(tk.deadline));
-    // Safety horizon so the loop always terminates even under
-    // pathological scheduling; +50 margin beyond the latest deadline.
+
     let horizon = max_deadline + 50.0;
 
     let mut total_context_switches: u32 = 0;
     let mut last_completion_time: f64 = 0.0;
 
-    // Per-core countdown of context-switch overhead ticks remaining.
-    // While > 0, that core executes no task work this tick.
+
     let mut switch_overhead_remaining: Vec<f64> = vec![0.0; config.num_cores];
 
     loop {
@@ -200,16 +148,6 @@ pub fn run_simulation(tasks: &mut [Task], config: &SimConfig) -> (Vec<SimEvent>,
         let is_running = |cores: &[Core], idx: usize| cores.iter().any(|c| c.running == Some(idx));
 
         // ---- 4. Preemption decisions, per busy core ----
-        //
-        // IMPLEMENTATION NOTE (flagged ambiguity #2 — preemption
-        // inequality, see project plan): the spec states the
-        // preemption condition as:
-        //     Laxity_critical(new) > C + 2 * RemainingTime(running)
-        // which reads unusually (a *large* candidate laxity triggering
-        // preemption is counter-intuitive; normally urgency = *low*
-        // laxity). We implement the inequality exactly as written in
-        // `should_preempt` below, isolated so it can be flipped in one
-        // place once confirmed with the TA.
         for core_idx in 0..cores.len() {
             if switch_overhead_remaining[core_idx] > 0.0 {
                 continue; // mid-switch; not eligible for re-evaluation
@@ -300,11 +238,7 @@ pub fn run_simulation(tasks: &mut [Task], config: &SimConfig) -> (Vec<SimEvent>,
     (events, result)
 }
 
-/// Isolates the preemption-severity test described in the spec so it
-/// can be revisited/flipped in one place once confirmed with the TA.
-///
-/// As written in the source document:
-///     Laxity_critical(new_task) > C + 2 * RemainingTime(running_task)
+
 fn should_preempt(candidate_laxity: f64, critical_coefficient: f64, running_remaining: f64) -> bool {
     candidate_laxity > critical_coefficient + 2.0 * running_remaining
 }

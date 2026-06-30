@@ -1,16 +1,3 @@
-//! generator.rs
-//!
-//! Generates randomized batches of tasks following the uniform
-//! distributions specified in the project document:
-//!   - Arrival time:      U[0, 30]
-//!   - Execution time:    U[1, 13]
-//!   - Priority:          discrete uniform over {1,2,3,4,5}
-//!   - Obstacle distance: U[50, 150] meters
-//!
-//! Deadlines are derived afterward via the physics-based TTC model
-//! in `task.rs`, which depends on weather and the deadline-tightness
-//! coefficient — both supplied by the caller (the experiment runner),
-//! not generated here.
 
 use crate::core::task::{compute_deadline, Task, Weather};
 use rand::Rng;
@@ -24,9 +11,7 @@ pub const EXEC_MAX: f64 = 13.0;
 pub const OBSTACLE_DIST_MIN: f64 = 50.0;
 pub const OBSTACLE_DIST_MAX: f64 = 150.0;
 
-/// Generates `n` tasks for one simulation round under the given
-/// `weather` and `tightness` settings, using `rng` for all random
-/// draws (caller controls seeding for reproducibility).
+
 pub fn generate_tasks<R: Rng>(
     rng: &mut R,
     n: usize,

@@ -1,11 +1,3 @@
-//! experiment.rs
-//!
-//! Phase 1 experiment runner. Phase 1 only needs to demonstrate that
-//! the simulation environment and the proposed (Relaxation-based)
-//! algorithm work correctly end-to-end; the full 100-run statistical
-//! sweeps against baselines (EDF-Global, MLLF) are Phase 2 work. This
-//! module still builds the sweep machinery now so Phase 2 can plug
-//! baseline schedulers in without restructuring anything.
 
 use crate::core::generator::{generate_tasks, DEFAULT_TASKS_PER_ROUND};
 use crate::core::simulator::{run_simulation, SimConfig, SimResult};

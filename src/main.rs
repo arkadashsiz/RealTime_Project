@@ -1,18 +1,3 @@
-//! main.rs
-//!
-//! Phase 1 entry point.
-//!
-//! Running `cargo run --release` will:
-//!   1. Generate one batch of 30 tasks and run a single demo episode
-//!      (2-core, sunny weather, tightness=1.0), printing a per-task
-//!      summary table to stdout so you can eyeball correctness.
-//!   2. Run the Phase 1 sanity sweep across {2,4} cores x 3 weather
-//!      conditions x 11 tightness points, 20 episodes each (kept
-//!      small for Phase 1; bump to 100 in Phase 2's full experiment),
-//!      and write aggregate results to `output/phase1_sweep.csv`.
-//!
-//! Run `cargo test` to execute the unit tests in `generator.rs` and
-//! `simulator.rs`.
 
 mod core;
 
