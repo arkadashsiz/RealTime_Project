@@ -2,7 +2,7 @@
 use crate::core::generator::{generate_tasks, DEFAULT_TASKS_PER_ROUND};
 use crate::core::simulator::{run_simulation, SimConfig, SimResult};
 use crate::core::task::Weather;
-use crate::core::scheduler::{LegacyScheduler};
+use crate::core::scheduler::*;
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -70,7 +70,7 @@ pub fn run_config(
             context_switch_cost: 1.0,
             critical_coefficient: 5.0,
         };
-        let mut scheduler = LegacyScheduler;
+        let mut scheduler = GlobalEdf;
         let (_events, result) = run_simulation(&mut tasks, &config,&mut scheduler);
         accumulate(&result, &mut total_dmr, &mut total_cs_per_task, &mut total_makespan, &mut total_dropped_ratio, &mut misses_by_priority_sum);
     }

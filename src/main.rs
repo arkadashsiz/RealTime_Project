@@ -4,11 +4,13 @@ mod core;
 use core::generator::{generate_tasks, DEFAULT_TASKS_PER_ROUND};
 use core::simulator::{run_simulation, SimConfig};
 use core::task::Weather;
-use core::scheduler::{LegacyScheduler};
+use core::scheduler::*;
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::path::Path;
+
+use crate::core::scheduler;
 
 fn main() {
     println!("=== ADAS Hybrid Scheduler — Phase 1 ===\n");
@@ -34,7 +36,7 @@ fn run_single_demo_episode() {
         context_switch_cost: 1.0,
         critical_coefficient: 5.0,
     };
-    let mut scheduler = LegacyScheduler;
+    let mut scheduler = GlobalEdf;
     let (_events, result) = run_simulation(&mut tasks, &config,&mut scheduler);
 
     println!(
