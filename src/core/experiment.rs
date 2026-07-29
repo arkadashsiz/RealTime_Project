@@ -1,8 +1,7 @@
-
 use crate::core::generator::{generate_tasks, DEFAULT_TASKS_PER_ROUND};
+use crate::core::scheduler::*;
 use crate::core::simulator::{run_simulation, SimConfig, SimResult};
 use crate::core::task::Weather;
-use crate::core::scheduler::*;
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -58,20 +57,20 @@ pub fn run_config(
     let mut total_dropped_ratio = 0.0;
     let mut misses_by_priority_sum = [0.0_f64; 5];
 
+    let config = SimConfig::for_sweep_point(num_cores, weather, tightness);
+
     for run_idx in 0..runs_per_config {
         let seed = base_seed.wrapping_add(run_idx as u64);
         let mut rng = StdRng::seed_from_u64(seed);
-        let mut tasks = generate_tasks(&mut rng, DEFAULT_TASKS_PER_ROUND, weather, tightness,target_utilization);
+        let mut tasks = generate_tasks(&mut rng, DEFAULT_TASKS_PER_ROUND, weather, tightness, target_utilization);
 
-        let config = SimConfig {
-            num_cores,
-            weather,
-            tightness,
-            context_switch_cost: 1.0,
-            critical_coefficient: 5.0,
-        };
+        // NOTE: Phase 1 only wires up GlobalEdf. The Relaxation-based
+        // scheduler that the README/spec names as this project's
+        // actual proposal (see task.rs's `relaxation`/`theta`/
+        // `normalize_laxities` helpers) isn't implemented as a
+        // `Scheduler` yet — that's a gap to close, not a refactor.
         let mut scheduler = GlobalEdf;
-        let (_events, result) = run_simulation(&mut tasks, &config,&mut scheduler);
+        let (_events, result) = run_simulation(&mut tasks, &config, &mut scheduler);
         accumulate(&result, &mut total_dmr, &mut total_cs_per_task, &mut total_makespan, &mut total_dropped_ratio, &mut misses_by_priority_sum);
     }
 
@@ -112,9 +111,19 @@ fn accumulate(
 }
 
 /// Phase-1 sanity sweep: for each of {2,4} cores, each weather
-/// condition, and each tightness sweep point, run `runs_per_config`
-/// episodes and collect aggregate rows. Writes the result to a CSV
-/// at `output_path`.
+/// condition, each tightness sweep point, and each of a small set of
+/// target utilizations, run `runs_per_config` episodes and collect
+/// aggregate rows. Writes the result to a CSV at `output_path`.
+///
+/// NOTE: the README's stated sweep shape is 2 core-counts x 3 weathers
+/// x 11 tightness points x N runs; the `utilizations` dimension below
+/// multiplies that by 4 and isn't mentioned there. Left in place since
+/// changing the sweep shape is a functional/experimental-design call,
+/// not a refactor — but worth confirming with your TA whether Phase 1
+/// output is meant to include a utilization sweep at all, since
+/// `visualize.py` doesn't group or facet by it.
+const UTILIZATION_SWEEP_POINTS: [f64; 4] = [0.5, 2.0, 3.0, 4.0];
+
 pub fn run_phase1_sanity_sweep(
     output_path: &Path,
     runs_per_config: usize,
@@ -122,17 +131,16 @@ pub fn run_phase1_sanity_sweep(
     let mut rows = Vec::new();
     let core_counts = [2usize, 4usize];
     let tightness_points = tightness_sweep_points();
-    let utilizations = [0.5f64,2f64,3f64,4f64];
     let mut seed_counter: u64 = 1000;
+
     for &cores in &core_counts {
         for weather in Weather::all() {
             for &tightness in &tightness_points {
-                for &utilization in &utilizations {
-                    let row = run_config(cores, weather, tightness, runs_per_config, seed_counter,utilization);
+                for &utilization in &UTILIZATION_SWEEP_POINTS {
+                    let row = run_config(cores, weather, tightness, runs_per_config, seed_counter, utilization);
                     seed_counter = seed_counter.wrapping_add(10_000);
                     rows.push(row);
                 }
-                
             }
         }
     }

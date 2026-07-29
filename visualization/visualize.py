@@ -2,7 +2,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-CSV_FILE = Path("../output/phase1_sweep.csv")
+CSV_FILE = Path("output/phase1_sweep.csv")
+
+METRICS = [
+    ("avg_deadline_miss_ratio", "Deadline Miss Ratio", "Scheduler Reliability vs Deadline Tightness"),
+    ("avg_makespan", "Average Makespan", "Execution Time vs Deadline Tightness"),
+    ("avg_dropped_ratio", "Dropped Task Ratio", "Task Dropping Behavior vs Deadline Tightness"),
+]
 
 
 def load_data():
@@ -14,11 +20,7 @@ def plot_metric(df, metric, ylabel, title):
 
     for cores in sorted(df["num_cores"].unique()):
         for weather in sorted(df["weather"].unique()):
-
-            subset = df[
-                (df["num_cores"] == cores)
-                & (df["weather"] == weather)
-            ].sort_values("tightness")
+            subset = df[(df["num_cores"] == cores) & (df["weather"] == weather)].sort_values("tightness")
 
             plt.plot(
                 subset["tightness"],
@@ -38,26 +40,8 @@ def plot_metric(df, metric, ylabel, title):
 def main():
     df = load_data()
 
-    plot_metric(
-        df,
-        "avg_deadline_miss_ratio",
-        "Deadline Miss Ratio",
-        "Scheduler Reliability vs Deadline Tightness",
-    )
-
-    plot_metric(
-        df,
-        "avg_makespan",
-        "Average Makespan",
-        "Execution Time vs Deadline Tightness",
-    )
-
-    plot_metric(
-        df,
-        "avg_dropped_ratio",
-        "Dropped Task Ratio",
-        "Task Dropping Behavior vs Deadline Tightness",
-    )
+    for metric, ylabel, title in METRICS:
+        plot_metric(df, metric, ylabel, title)
 
     plt.show()
 

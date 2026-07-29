@@ -1,16 +1,13 @@
-
 mod core;
 
 use core::generator::{generate_tasks, DEFAULT_TASKS_PER_ROUND};
+use core::scheduler::*;
 use core::simulator::{run_simulation, SimConfig};
 use core::task::Weather;
-use core::scheduler::*;
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::path::Path;
-
-use crate::core::scheduler;
 
 fn main() {
     println!("=== ADAS Hybrid Scheduler — Phase 1 ===\n");
@@ -27,17 +24,11 @@ fn run_single_demo_episode() {
     let weather = Weather::Sunny;
     let tightness = 1.0;
     let target_utilization = 1.0;
-    let mut tasks = generate_tasks(&mut rng, DEFAULT_TASKS_PER_ROUND, weather, tightness,target_utilization);
+    let mut tasks = generate_tasks(&mut rng, DEFAULT_TASKS_PER_ROUND, weather, tightness, target_utilization);
 
-    let config = SimConfig {
-        num_cores: 2,
-        weather,
-        tightness,
-        context_switch_cost: 1.0,
-        critical_coefficient: 5.0,
-    };
+    let config = SimConfig::for_sweep_point(2, weather, tightness);
     let mut scheduler = GlobalEdf;
-    let (_events, result) = run_simulation(&mut tasks, &config,&mut scheduler);
+    let (_events, result) = run_simulation(&mut tasks, &config, &mut scheduler);
 
     println!(
         "{:<4} {:>8} {:>8} {:>4} {:>9} {:>9} {:>9} {:>9} {:>9}",
@@ -97,12 +88,7 @@ fn run_sanity_sweep() {
             for row in rows.iter().take(5) {
                 println!(
                     "  cores={} weather={:<6} tightness={:.2} -> DMR={:.3} avg_cs/task={:.2} avg_makespan={:.2}",
-                    row.num_cores,
-                    row.weather,
-                    row.tightness,
-                    row.avg_deadline_miss_ratio,
-                    row.avg_context_switches_per_task,
-                    row.avg_makespan
+                    row.num_cores, row.weather, row.tightness, row.avg_deadline_miss_ratio, row.avg_context_switches_per_task, row.avg_makespan
                 );
             }
 
@@ -125,10 +111,7 @@ fn sanity_check_monotonic_trend(rows: &[core::experiment::AggregateRow]) {
     use std::collections::HashMap;
     let mut grouped: HashMap<(usize, String), Vec<(f64, f64)>> = HashMap::new();
     for row in rows {
-        grouped
-            .entry((row.num_cores, row.weather.clone()))
-            .or_default()
-            .push((row.tightness, row.avg_deadline_miss_ratio));
+        grouped.entry((row.num_cores, row.weather.clone())).or_default().push((row.tightness, row.avg_deadline_miss_ratio));
     }
     for ((cores, weather), mut series) in grouped {
         series.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());

@@ -1,4 +1,3 @@
-
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -37,21 +36,11 @@ pub type Priority = u8;
 #[derive(Debug, Clone, Serialize)]
 pub struct Task {
     pub id: usize,
-
-
     pub arrival_time: f64,
-
-
     pub execution_time: f64,
-
-
     pub remaining_time: f64,
-
     pub priority: Priority,
-
-
     pub obstacle_distance: f64,
-
     pub deadline: f64,
 
     // --- Bookkeeping fields populated during simulation ---
@@ -67,10 +56,12 @@ pub struct Task {
 pub const V0: f64 = 30.0; // initial vehicle speed, m/s
 pub const A: f64 = 5.0; // braking deceleration, m/s^2
 
+/// See README assumption (1): `d_effective = d / tightness` is our
+/// convention for how Deadline Tightness enters the TTC formula.
+/// Confirm with the TA before trusting downstream results.
 pub fn effective_distance(obstacle_distance: f64, tightness: f64) -> f64 {
     obstacle_distance / tightness
 }
-
 
 pub fn time_to_collision(d_effective: f64, lambda: f64) -> Option<f64> {
     let denom = A * (1.0 - lambda);
@@ -87,7 +78,8 @@ pub fn time_to_collision(d_effective: f64, lambda: f64) -> Option<f64> {
     Some(ttc)
 }
 
-
+/// See README assumption (4): fallback TTC used when no real collision
+/// solution exists under the given braking assumptions.
 pub const FALLBACK_TTC: f64 = 50.0;
 
 pub fn compute_deadline(
@@ -109,6 +101,22 @@ impl Task {
     }
 }
 
+// ---------------------------------------------------------------------
+// Relaxation (R) metric helpers.
+//
+// These implement the "Relaxation-based" ranking that the project spec
+// (Project 6) names as the proposed Phase-1 algorithm: theta(lambda),
+// per-tick laxity normalization, and R = theta * L_norm + priority.
+//
+// NOTE: no `Scheduler` impl in scheduler.rs currently calls these —
+// only `GlobalEdf` and `PartitionedEdf` are wired up today. Keeping
+// these functions is intentional (they are the building blocks for the
+// actual Relaxation scheduler this project is named after), but a
+// `RelaxationScheduler` implementing the `Scheduler` trait still needs
+// to be added and used in `main.rs`/`experiment.rs` before Phase 1 is
+// functionally complete. Flagging this rather than silently deleting
+// "unused" code, since it looks like the real gap in this codebase.
+// ---------------------------------------------------------------------
 
 pub fn theta(lambda: f64) -> f64 {
     1.5 + lambda
@@ -126,7 +134,6 @@ pub fn normalize_laxities(laxities: &[f64]) -> Vec<f64> {
     }
     laxities.iter().map(|l| (l - min_l) / range).collect()
 }
-
 
 pub fn relaxation(theta_val: f64, l_norm: f64, priority: Priority) -> f64 {
     theta_val * l_norm + priority as f64

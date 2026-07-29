@@ -1,6 +1,6 @@
 // src/core/scheduler.rs
-use crate::core::task::Task;
 use crate::core::simulator::SimConfig;
+use crate::core::task::Task;
 use std::collections::HashMap;
 
 /// A snapshot of a core's current state, provided to the scheduler.
@@ -42,7 +42,7 @@ impl Scheduler for GlobalEdf {
         _config: &SimConfig,
     ) -> Vec<Option<usize>> {
         let mut desired = vec![None; cores.len()];
-        
+
         // 1. Gather all tasks that aren't locked in a context switch
         let mut available_tasks = ready_queue.to_vec();
         for (i, core) in cores.iter().enumerate() {
@@ -63,7 +63,9 @@ impl Scheduler for GlobalEdf {
 
         // 4. Pass 1 (Affinity): Keep tasks on their current cores to avoid context switches
         for i in 0..cores.len() {
-            if cores[i].is_switching { continue; }
+            if cores[i].is_switching {
+                continue;
+            }
             if let Some(running) = cores[i].running_task {
                 if let Some(pos) = top_tasks.iter().position(|&t| t == running) {
                     desired[i] = Some(running);
@@ -74,8 +76,10 @@ impl Scheduler for GlobalEdf {
 
         // 5. Pass 2: Assign remaining high-priority tasks to remaining idle/preempted cores
         for i in 0..cores.len() {
-            if cores[i].is_switching || desired[i].is_some() { continue; }
-            desired[i] = top_tasks.pop(); 
+            if cores[i].is_switching || desired[i].is_some() {
+                continue;
+            }
+            desired[i] = top_tasks.pop();
         }
 
         desired
@@ -85,19 +89,11 @@ impl Scheduler for GlobalEdf {
 // ==========================================
 // 2. PARTITIONED EDF SCHEDULER
 // ==========================================
+#[derive(Default)]
 pub struct PartitionedEdf {
     /// Maps task_id -> core_idx
     task_to_core: HashMap<usize, usize>,
     next_core_to_assign: usize,
-}
-
-impl Default for PartitionedEdf {
-    fn default() -> Self {
-        Self {
-            task_to_core: HashMap::new(),
-            next_core_to_assign: 0,
-        }
-    }
 }
 
 impl Scheduler for PartitionedEdf {
@@ -116,7 +112,7 @@ impl Scheduler for PartitionedEdf {
         _config: &SimConfig,
     ) -> Vec<Option<usize>> {
         let mut desired = vec![None; cores.len()];
-        
+
         for (core_idx, core) in cores.iter().enumerate() {
             if core.is_switching {
                 desired[core_idx] = core.running_task;

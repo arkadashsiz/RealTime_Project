@@ -12,7 +12,7 @@ pub const EXEC_MAX: f64 = 13.0;
 pub const OBSTACLE_DIST_MIN: f64 = 50.0;
 pub const OBSTACLE_DIST_MAX: f64 = 150.0;
 
-/// Generates a set of tasks where the total/average workload is controlled 
+/// Generates a set of tasks where the total/average workload is controlled
 /// by `target_utilization` using the UUnifast algorithm.
 pub fn generate_tasks<R: Rng>(
     rng: &mut R,
@@ -46,10 +46,12 @@ pub fn generate_tasks<R: Rng>(
     utilizations.push(sum_u);
 
     // 3. Construct tasks using the generated utilizations and windows
-    for (id, ((arrival_time, priority, obstacle_distance, deadline, window), u)) in raw_data.into_iter().zip(utilizations).enumerate() {
+    for (id, ((arrival_time, priority, obstacle_distance, deadline, window), u)) in
+        raw_data.into_iter().zip(utilizations).enumerate()
+    {
         // Derived execution time: C = utilization * window
         let mut execution_time = u * window;
-        
+
         // Clamp execution time to reasonable execution bounds
         execution_time = execution_time.clamp(EXEC_MIN, EXEC_MAX);
 

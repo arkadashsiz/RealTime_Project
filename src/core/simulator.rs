@@ -1,5 +1,6 @@
-use crate::core::task::{normalize_laxities, relaxation, theta, Task, Weather};
-use crate::core::scheduler::{Scheduler, CoreView};
+use crate::core::scheduler::{CoreView, Scheduler};
+use crate::core::task::{Task, Weather};
+
 #[derive(Debug, Clone)]
 pub enum SimEvent {
     Started { time: f64, task_id: usize, core: usize, preemptive: bool },
@@ -26,6 +27,23 @@ pub struct SimConfig {
     pub tightness: f64,
     pub context_switch_cost: f64,
     pub critical_coefficient: f64,
+}
+
+impl SimConfig {
+    /// Convenience constructor for the (num_cores, weather, tightness)
+    /// triple that varies across sweep points, leaving the remaining
+    /// fields at their documented defaults. Avoids repeating the full
+    /// struct literal (and re-deciding `context_switch_cost` /
+    /// `critical_coefficient`) at every call site in `main.rs` and
+    /// `experiment.rs`.
+    pub fn for_sweep_point(num_cores: usize, weather: Weather, tightness: f64) -> Self {
+        SimConfig {
+            num_cores,
+            weather,
+            tightness,
+            ..SimConfig::default()
+        }
+    }
 }
 
 impl Default for SimConfig {
@@ -56,14 +74,13 @@ pub struct SimResult {
 }
 
 pub fn run_simulation<S: Scheduler>(
-    tasks: &mut [Task], 
-    config: &SimConfig, 
-    scheduler: &mut S
+    tasks: &mut [Task],
+    config: &SimConfig,
+    scheduler: &mut S,
 ) -> (Vec<SimEvent>, SimResult) {
     let mut events = Vec::new();
     let mut cores: Vec<Core> = (0..config.num_cores).map(|_| Core { running: None }).collect();
-    
-    // Setup logic remains identical...
+
     let mut arrival_order: Vec<usize> = (0..tasks.len()).collect();
     arrival_order.sort_by(|&a, &b| tasks[a].arrival_time.partial_cmp(&tasks[b].arrival_time).unwrap());
     let mut next_arrival_ptr = 0usize;
@@ -76,7 +93,9 @@ pub fn run_simulation<S: Scheduler>(
     let mut switch_overhead_remaining: Vec<f64> = vec![0.0; config.num_cores];
 
     loop {
-        if t >= horizon { break; }
+        if t >= horizon {
+            break;
+        }
 
         // ---- 1. Admit newly arrived tasks ----
         while next_arrival_ptr < arrival_order.len()
@@ -84,25 +103,27 @@ pub fn run_simulation<S: Scheduler>(
         {
             let idx = arrival_order[next_arrival_ptr];
             ready_queue.push(idx);
-            
-            // NEW: Let the scheduler know a task arrived
             scheduler.on_task_arrival(idx, tasks, config);
-            
             next_arrival_ptr += 1;
         }
 
         // Termination check
-        if next_arrival_ptr >= arrival_order.len() && ready_queue.is_empty() && cores.iter().all(|c| c.running.is_none()) {
+        if next_arrival_ptr >= arrival_order.len()
+            && ready_queue.is_empty()
+            && cores.iter().all(|c| c.running.is_none())
+        {
             break;
         }
 
-        // ---- 2. Drop negative laxity (identical to before) ----
+        // ---- 2. Drop negative-laxity tasks ----
         let mut newly_dropped = Vec::new();
         ready_queue.retain(|&idx| {
             if tasks[idx].laxity(t) < 0.0 {
                 newly_dropped.push(idx);
                 false
-            } else { true }
+            } else {
+                true
+            }
         });
         for idx in newly_dropped {
             tasks[idx].dropped = true;
@@ -116,15 +137,19 @@ pub fn run_simulation<S: Scheduler>(
             events.push(SimEvent::Dropped { time: t, task_id: tasks[idx].id, reason: DropReason::NegativeLaxity });
         }
 
-        // ---- 3. Ask Scheduler for Core Decisions ----
-        let core_views: Vec<CoreView> = cores.iter().enumerate().map(|(i, c)| CoreView {
-            running_task: c.running,
-            is_switching: switch_overhead_remaining[i] > 0.0,
-        }).collect();
+        // ---- 3. Ask the scheduler for this tick's core assignments ----
+        let core_views: Vec<CoreView> = cores
+            .iter()
+            .enumerate()
+            .map(|(i, c)| CoreView {
+                running_task: c.running,
+                is_switching: switch_overhead_remaining[i] > 0.0,
+            })
+            .collect();
 
         let desired_states = scheduler.schedule(&ready_queue, &core_views, tasks, t, config);
 
-        // ---- 4. Apply Scheduler Decisions ----
+        // ---- 4. Apply scheduler decisions ----
         for core_idx in 0..cores.len() {
             if switch_overhead_remaining[core_idx] > 0.0 {
                 continue; // Cannot alter a core mid-switch
@@ -156,7 +181,7 @@ pub fn run_simulation<S: Scheduler>(
                     switch_overhead_remaining[core_idx] = config.context_switch_cost;
                     total_context_switches += 1;
                     tasks[new_idx].context_switches_incurred += 1;
-                    
+
                     events.push(SimEvent::Started {
                         time: t,
                         task_id: tasks[new_idx].id,
@@ -167,7 +192,7 @@ pub fn run_simulation<S: Scheduler>(
             }
         }
 
-        // ---- 5. Execute one tick (identical to before) ----
+        // ---- 5. Execute one tick ----
         for core_idx in 0..cores.len() {
             if switch_overhead_remaining[core_idx] > 0.0 {
                 switch_overhead_remaining[core_idx] -= 1.0;
@@ -185,9 +210,9 @@ pub fn run_simulation<S: Scheduler>(
             }
         }
 
-        // ---- 6. Clean ready queue (identical to before) ----
+        // ---- 6. Clean ready queue ----
         ready_queue.retain(|&idx| !tasks[idx].completed && !tasks[idx].dropped);
-        
+
         t += 1.0;
     }
 
@@ -195,6 +220,18 @@ pub fn run_simulation<S: Scheduler>(
     (events, result)
 }
 
+/// README assumption (2): the spec's preemption inequality, implemented
+/// literally as written (`Laxity_critical(new) > C + 2 * RemainingTime(running)`).
+///
+/// NOT currently called from `run_simulation` — core assignment is
+/// fully delegated to `Scheduler::schedule` (see `scheduler.rs`), and
+/// neither `GlobalEdf` nor `PartitionedEdf` consults this inequality;
+/// they use plain EDF-affinity instead. Kept (rather than deleted) so
+/// the documented-but-unresolved spec ambiguity isn't lost, and so a
+/// future `Scheduler` impl that needs it doesn't have to re-derive it.
+/// `#[allow(dead_code)]` silences the unused-function warning that
+/// would otherwise show up until such a scheduler calls it.
+#[allow(dead_code)]
 fn should_preempt(candidate_laxity: f64, critical_coefficient: f64, running_remaining: f64) -> bool {
     candidate_laxity < critical_coefficient + 2.0 * running_remaining
 }
