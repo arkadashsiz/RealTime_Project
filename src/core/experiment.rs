@@ -2,6 +2,8 @@
 use crate::core::generator::{generate_tasks, DEFAULT_TASKS_PER_ROUND};
 use crate::core::simulator::{run_simulation, SimConfig, SimResult};
 use crate::core::task::Weather;
+use crate::core::scheduler::{LegacyScheduler};
+
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::error::Error;
@@ -48,6 +50,7 @@ pub fn run_config(
     tightness: f64,
     runs_per_config: usize,
     base_seed: u64,
+    target_utilization: f64,
 ) -> AggregateRow {
     let mut total_dmr = 0.0;
     let mut total_cs_per_task = 0.0;
@@ -58,7 +61,7 @@ pub fn run_config(
     for run_idx in 0..runs_per_config {
         let seed = base_seed.wrapping_add(run_idx as u64);
         let mut rng = StdRng::seed_from_u64(seed);
-        let mut tasks = generate_tasks(&mut rng, DEFAULT_TASKS_PER_ROUND, weather, tightness);
+        let mut tasks = generate_tasks(&mut rng, DEFAULT_TASKS_PER_ROUND, weather, tightness,target_utilization);
 
         let config = SimConfig {
             num_cores,
@@ -67,8 +70,8 @@ pub fn run_config(
             context_switch_cost: 1.0,
             critical_coefficient: 5.0,
         };
-
-        let (_events, result) = run_simulation(&mut tasks, &config);
+        let mut scheduler = LegacyScheduler;
+        let (_events, result) = run_simulation(&mut tasks, &config,&mut scheduler);
         accumulate(&result, &mut total_dmr, &mut total_cs_per_task, &mut total_makespan, &mut total_dropped_ratio, &mut misses_by_priority_sum);
     }
 
@@ -119,14 +122,17 @@ pub fn run_phase1_sanity_sweep(
     let mut rows = Vec::new();
     let core_counts = [2usize, 4usize];
     let tightness_points = tightness_sweep_points();
-
+    let utilizations = [0.5f64,2f64,3f64,4f64];
     let mut seed_counter: u64 = 1000;
     for &cores in &core_counts {
         for weather in Weather::all() {
             for &tightness in &tightness_points {
-                let row = run_config(cores, weather, tightness, runs_per_config, seed_counter);
-                seed_counter = seed_counter.wrapping_add(10_000);
-                rows.push(row);
+                for &utilization in &utilizations {
+                    let row = run_config(cores, weather, tightness, runs_per_config, seed_counter,utilization);
+                    seed_counter = seed_counter.wrapping_add(10_000);
+                    rows.push(row);
+                }
+                
             }
         }
     }

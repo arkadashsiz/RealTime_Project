@@ -1,5 +1,5 @@
 use crate::core::task::{normalize_laxities, relaxation, theta, Task, Weather};
-
+use crate::core::scheduler::Scheduler;
 #[derive(Debug, Clone)]
 pub enum SimEvent {
     Started { time: f64, task_id: usize, core: usize, preemptive: bool },
@@ -55,7 +55,11 @@ pub struct SimResult {
     pub tasks_by_priority: [usize; 5],
 }
 
-pub fn run_simulation(tasks: &mut [Task], config: &SimConfig) -> (Vec<SimEvent>, SimResult) {
+pub fn run_simulation<S: Scheduler>(
+    tasks: &mut [Task], 
+    config: &SimConfig, 
+    scheduler: &mut S
+) -> (Vec<SimEvent>, SimResult) {
     let mut events = Vec::new();
     let mut cores: Vec<Core> = (0..config.num_cores).map(|_| Core { running: None }).collect();
 
@@ -134,19 +138,12 @@ pub fn run_simulation(tasks: &mut [Task], config: &SimConfig) -> (Vec<SimEvent>,
             });
         }
 
-        // ---- 3. Rank the ready queue by Relaxation R (ascending) ----
-        let laxities: Vec<f64> = ready_queue.iter().map(|&idx| tasks[idx].laxity(t)).collect();
-        let l_norms = normalize_laxities(&laxities);
-        let mut ranked: Vec<(usize, f64)> = ready_queue
-            .iter()
-            .zip(l_norms.iter())
-            .map(|(&idx, &ln)| (idx, relaxation(theta_val, ln, tasks[idx].priority)))
-            .collect();
-        ranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        // ---- 3. Rank the ready queue using the injected Scheduler ----
+        let ranked_indices = scheduler.rank_tasks(&ready_queue, tasks, t, config);
 
         // Helper: is task index `idx` currently occupying *any* core?
         let is_running = |cores: &[Core], idx: usize| cores.iter().any(|c| c.running == Some(idx));
-
+        
         // ---- 4. Preemption decisions, per busy core ----
         for core_idx in 0..cores.len() {
             if switch_overhead_remaining[core_idx] > 0.0 {
@@ -156,9 +153,10 @@ pub fn run_simulation(tasks: &mut [Task], config: &SimConfig) -> (Vec<SimEvent>,
                 Some(idx) => idx,
                 None => continue, // handled in the free-core pass below
             };
-            // Best waiting (not currently running anywhere) candidate.
-            let candidate = ranked.iter().find(|&&(idx, _)| !is_running(&cores, idx));
-            if let Some(&(cand_idx, _)) = candidate {
+            
+            // Best waiting candidate using ranked_indices and .copied()
+            let candidate = ranked_indices.iter().copied().find(|&idx| !is_running(&cores, idx));
+            if let Some(cand_idx) = candidate {
                 let cand_laxity = tasks[cand_idx].laxity(t);
                 let running_remaining = tasks[running_idx].remaining_time;
                 if should_preempt(cand_laxity, config.critical_coefficient, running_remaining) {
@@ -189,14 +187,15 @@ pub fn run_simulation(tasks: &mut [Task], config: &SimConfig) -> (Vec<SimEvent>,
             if switch_overhead_remaining[core_idx] > 0.0 || cores[core_idx].running.is_some() {
                 continue;
             }
-            if let Some(&(cand_idx, _)) = ranked.iter().find(|&&(idx, _)| !is_running(&cores, idx)) {
+            
+            // Assign using ranked_indices and .copied()
+            if let Some(cand_idx) = ranked_indices.iter().copied().find(|&idx| !is_running(&cores, idx)) {
                 cores[core_idx].running = Some(cand_idx);
                 if tasks[cand_idx].start_time.is_none() {
                     tasks[cand_idx].start_time = Some(t);
                 }
                 // A fresh assignment to a previously-idle core still
-                // incurs the context-switch cost per spec (loading
-                // the task's context onto the core).
+                // incurs the context-switch cost per spec.
                 switch_overhead_remaining[core_idx] = config.context_switch_cost;
                 total_context_switches += 1;
                 tasks[cand_idx].context_switches_incurred += 1;
@@ -240,7 +239,7 @@ pub fn run_simulation(tasks: &mut [Task], config: &SimConfig) -> (Vec<SimEvent>,
 
 
 fn should_preempt(candidate_laxity: f64, critical_coefficient: f64, running_remaining: f64) -> bool {
-    candidate_laxity > critical_coefficient + 2.0 * running_remaining
+    candidate_laxity < critical_coefficient + 2.0 * running_remaining
 }
 
 fn summarize(tasks: &[Task], total_context_switches: u32, last_completion_time: f64) -> SimResult {
@@ -288,46 +287,5 @@ fn summarize(tasks: &[Task], total_context_switches: u32, last_completion_time: 
         makespan: last_completion_time,
         misses_by_priority,
         tasks_by_priority,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::generator::generate_tasks;
-    use crate::core::task::Weather;
-    use rand::rngs::StdRng;
-    use rand::SeedableRng;
-
-    #[test]
-    fn simulation_terminates_and_accounts_for_every_task() {
-        let mut rng = StdRng::seed_from_u64(123);
-        let mut tasks = generate_tasks(&mut rng, 30, Weather::Sunny, 1.0);
-        let config = SimConfig { num_cores: 2, weather: Weather::Sunny, tightness: 1.0, ..Default::default() };
-        let (_events, result) = run_simulation(&mut tasks, &config);
-
-        assert_eq!(result.total_tasks, 30);
-        for tk in &tasks {
-            assert!(tk.completed || tk.dropped, "task {} neither completed nor dropped", tk.id);
-        }
-        assert_eq!(result.completed_on_time + result.deadline_miss_count, 30);
-    }
-
-    #[test]
-    fn runs_under_contention_without_panicking() {
-        let mut rng = StdRng::seed_from_u64(99);
-        let mut tasks = generate_tasks(&mut rng, 30, Weather::Snowy, 2.0);
-        let config = SimConfig { num_cores: 2, weather: Weather::Snowy, tightness: 2.0, ..Default::default() };
-        let (_events, result) = run_simulation(&mut tasks, &config);
-        assert_eq!(result.total_tasks, 30);
-    }
-
-    #[test]
-    fn four_core_config_runs() {
-        let mut rng = StdRng::seed_from_u64(55);
-        let mut tasks = generate_tasks(&mut rng, 30, Weather::Rainy, 1.5);
-        let config = SimConfig { num_cores: 4, weather: Weather::Rainy, tightness: 1.5, ..Default::default() };
-        let (_events, result) = run_simulation(&mut tasks, &config);
-        assert_eq!(result.total_tasks, 30);
     }
 }

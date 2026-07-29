@@ -4,6 +4,7 @@ mod core;
 use core::generator::{generate_tasks, DEFAULT_TASKS_PER_ROUND};
 use core::simulator::{run_simulation, SimConfig};
 use core::task::Weather;
+use core::scheduler::{LegacyScheduler};
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -23,7 +24,8 @@ fn run_single_demo_episode() {
     let mut rng = StdRng::seed_from_u64(42);
     let weather = Weather::Sunny;
     let tightness = 1.0;
-    let mut tasks = generate_tasks(&mut rng, DEFAULT_TASKS_PER_ROUND, weather, tightness);
+    let target_utilization = 1.0;
+    let mut tasks = generate_tasks(&mut rng, DEFAULT_TASKS_PER_ROUND, weather, tightness,target_utilization);
 
     let config = SimConfig {
         num_cores: 2,
@@ -32,8 +34,8 @@ fn run_single_demo_episode() {
         context_switch_cost: 1.0,
         critical_coefficient: 5.0,
     };
-
-    let (_events, result) = run_simulation(&mut tasks, &config);
+    let mut scheduler = LegacyScheduler;
+    let (_events, result) = run_simulation(&mut tasks, &config,&mut scheduler);
 
     println!(
         "{:<4} {:>8} {:>8} {:>4} {:>9} {:>9} {:>9} {:>9} {:>9}",
