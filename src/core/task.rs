@@ -121,18 +121,34 @@ impl Task {
 pub fn theta(lambda: f64) -> f64 {
     1.5 + lambda
 }
-
+pub const PRIORITY_LEVELS: f64 = 5.0;
 pub fn normalize_laxities(laxities: &[f64]) -> Vec<f64> {
     if laxities.is_empty() {
         return vec![];
     }
-    let min_l = laxities.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max_l = laxities.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+    let min_l = laxities
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+
+    let max_l = laxities
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+
     let range = max_l - min_l;
+
     if range.abs() < 1e-9 {
-        return vec![0.5; laxities.len()];
+        return vec![PRIORITY_LEVELS / 2.0; laxities.len()];
     }
-    laxities.iter().map(|l| (l - min_l) / range).collect()
+
+    laxities
+        .iter()
+        .map(|l| {
+            ((l - min_l) / range) * PRIORITY_LEVELS
+        })
+        .collect()
 }
 
 pub fn relaxation(theta_val: f64, l_norm: f64, priority: Priority) -> f64 {

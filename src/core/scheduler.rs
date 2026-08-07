@@ -203,6 +203,93 @@ impl Scheduler for Mllf {
 // ==========================================
 pub struct ProposedAlgorithm;
 
+/// Safety margin for TTC comparisons.
+///
+/// The paper introduces δ_TTC but does not give a concrete numerical
+/// value. Therefore this must be supplied by the experiment/configuration.
+const TTC_MARGIN: f64 = 0.1;
+
+/// Relaxation tie-band ε_R.
+///
+/// The paper introduces ε_R but does not specify a numerical value.
+/// This is therefore an implementation parameter.
+const RELAXATION_TIE_BAND: f64 = 0.1;
+
+impl ProposedAlgorithm {
+    /// Calculate TTC from the task's obstacle distance and the current
+    /// environmental conditions.
+    fn task_ttc(
+        task: &Task,
+        config: &SimConfig,
+    ) -> f64 {
+        let d_eff =
+            crate::core::task::effective_distance(
+                task.obstacle_distance,
+                config.tightness,
+            );
+
+        crate::core::task::time_to_collision(
+            d_eff,
+            config.weather.lambda(),
+        )
+        .unwrap_or(crate::core::task::FALLBACK_TTC)
+    }
+
+    /// Returns true when `a` should be preferred to `b` according to
+    /// the paper's lexicographic comparison rules.
+    fn preferred(
+        a: &Task,
+        b: &Task,
+        a_relaxation: f64,
+        b_relaxation: f64,
+        current_time: f64,
+        config: &SimConfig,
+    ) -> bool {
+        let la = a.laxity(current_time);
+        let lb = b.laxity(current_time);
+
+        // Rule 1:
+        // A task with non-negative laxity is preferred to a task
+        // with negative laxity.
+        if la >= 0.0 && lb < 0.0 {
+            return true;
+        }
+
+        if la < 0.0 && lb >= 0.0 {
+            return false;
+        }
+
+        let ttc_a = Self::task_ttc(a, config);
+        let ttc_b = Self::task_ttc(b, config);
+
+        // Rule 2 from the paper:
+        //
+        // TTC_i + δ_TTC > TTC_j
+        //
+        // The paper defines this as a precedence rule independent
+        // of R. We reproduce that rule literally.
+        if ttc_a + TTC_MARGIN > ttc_b {
+            return true;
+        }
+
+        if ttc_b + TTC_MARGIN > ttc_a {
+            return false;
+        }
+
+        // Rule 3:
+        // If relaxation values are sufficiently close, use TTC
+        // as the deterministic tie-breaker.
+        if (a_relaxation - b_relaxation).abs()
+            <= RELAXATION_TIE_BAND
+        {
+            return ttc_a < ttc_b;
+        }
+
+        // Otherwise lower relaxation wins.
+        a_relaxation < b_relaxation
+    }
+}
+
 impl Scheduler for ProposedAlgorithm {
     fn schedule(
         &mut self,
@@ -213,86 +300,260 @@ impl Scheduler for ProposedAlgorithm {
         config: &SimConfig,
     ) -> Vec<Option<usize>> {
         let mut desired = vec![None; cores.len()];
-        let mut available_tasks = ready_queue.to_vec();
 
-        for (i, core) in cores.iter().enumerate() {
-            if core.is_switching {
-                desired[i] = core.running_task;
-                if let Some(t) = core.running_task {
-                    available_tasks.retain(|&idx| idx != t);
+        /*
+         * Tasks currently undergoing a context switch cannot be changed.
+         * They are also not considered candidates for another core.
+         */
+        let mut available_tasks = Vec::new();
+
+        for &idx in ready_queue {
+            let mut assigned_to_switching_core = false;
+
+            for core in cores {
+                if core.is_switching
+                    && core.running_task == Some(idx)
+                {
+                    assigned_to_switching_core = true;
+                    break;
                 }
+            }
+
+            if !assigned_to_switching_core {
+                available_tasks.push(idx);
             }
         }
 
+        /*
+         * Negative-laxity tasks should not be selected.
+         *
+         * The simulator also drops these tasks from the ready queue,
+         * but filtering here makes the scheduler safe independently.
+         */
+        available_tasks.retain(|&idx| {
+            tasks[idx].laxity(current_time) >= 0.0
+        });
+
         if available_tasks.is_empty() {
+            for (i, core) in cores.iter().enumerate() {
+                if core.is_switching {
+                    desired[i] = core.running_task;
+                } else {
+                    desired[i] = core.running_task;
+                }
+            }
+
             return desired;
         }
 
-        // 1. Compute and normalize laxities
-        let laxities: Vec<f64> = available_tasks.iter().map(|&idx| tasks[idx].laxity(current_time)).collect();
-        let norm_laxities = normalize_laxities(&laxities);
-        let theta_val = theta(config.weather.lambda());
+        /*
+         * ------------------------------------------------------------
+         * 1. Calculate laxities
+         * ------------------------------------------------------------
+         */
+        let laxities: Vec<f64> = available_tasks
+            .iter()
+            .map(|&idx| tasks[idx].laxity(current_time))
+            .collect();
 
-        // 2. Calculate Relaxation Metric R_i for each task
-        let mut metrics: Vec<(usize, f64)> = available_tasks
-            .into_iter()
+        /*
+         * ------------------------------------------------------------
+         * 2. Normalize laxities to the priority scale
+         * ------------------------------------------------------------
+         */
+        let normalized = normalize_laxities(&laxities);
+
+        let theta_value =
+            theta(config.weather.lambda());
+
+        /*
+         * ------------------------------------------------------------
+         * 3. Calculate relaxation
+         * ------------------------------------------------------------
+         */
+        let mut ranked: Vec<(usize, f64)> = available_tasks
+            .iter()
             .enumerate()
-            .map(|(i, idx)| {
-                let r_i = relaxation(theta_val, norm_laxities[i], tasks[idx].priority);
-                (idx, r_i)
+            .map(|(i, &idx)| {
+                let r = relaxation(
+                    theta_value,
+                    normalized[i],
+                    tasks[idx].priority,
+                );
+
+                (idx, r)
             })
             .collect();
 
-        // 3. Sort ascending by R_i (lowest R_i is the most critical)
-        metrics.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        let mut top_tasks: Vec<usize> = metrics.into_iter().map(|(idx, _)| idx).collect();
+        /*
+         * ------------------------------------------------------------
+         * 4. Sort using the paper's comparison rules
+         * ------------------------------------------------------------
+         */
+        ranked.sort_by(|(idx_a, r_a), (idx_b, r_b)| {
+            if *idx_a == *idx_b {
+                return std::cmp::Ordering::Equal;
+            }
 
-        // 4. Assign to cores enforcing the Preemption Inequality
-        for i in 0..cores.len() {
-            if cores[i].is_switching { continue; }
-            
-            if let Some(running_idx) = cores[i].running_task {
-                if let Some(&incoming_idx) = top_tasks.first() {
-                    if incoming_idx == running_idx {
-                        // The running task is still the absolute best task
-                        desired[i] = Some(running_idx);
-                        top_tasks.remove(0);
-                    } else {
-                        // The running task is NOT the best. Check if we should preempt it.
-                        // Formula: L(new) < C_rem(running) + 2 * alpha
-                        let incoming_laxity = tasks[incoming_idx].laxity(current_time);
-                        let threshold = tasks[running_idx].remaining_time + (2.0 * config.context_switch_cost);
+            if Self::preferred(
+                &tasks[*idx_a],
+                &tasks[*idx_b],
+                *r_a,
+                *r_b,
+                current_time,
+                config,
+            ) {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        });
 
-                        if incoming_laxity < threshold {
-                            // Preemption strictly allowed
-                            desired[i] = Some(incoming_idx);
-                            top_tasks.remove(0);
-                        } else {
-                            // Preemption failed. Keep running the current task.
-                            desired[i] = Some(running_idx);
-                            if let Some(pos) = top_tasks.iter().position(|&t| t == running_idx) {
-                                top_tasks.remove(pos); // Ensure it's not reassigned elsewhere
+        let mut candidates: Vec<usize> =
+            ranked.into_iter().map(|(idx, _)| idx).collect();
+
+        /*
+         * ------------------------------------------------------------
+         * 5. Preserve tasks already running when appropriate,
+         *    otherwise apply the paper's preemption condition.
+         * ------------------------------------------------------------
+         */
+        for core_idx in 0..cores.len() {
+            if cores[core_idx].is_switching {
+                desired[core_idx] =
+                    cores[core_idx].running_task;
+                continue;
+            }
+
+            let running_idx =
+                cores[core_idx].running_task;
+
+            match running_idx {
+                None => {
+                    /*
+                     * Idle core:
+                     *
+                     * Algorithm 1 says to assign the task with minimum
+                     * relaxation.
+                     */
+                    if let Some(next) = candidates.first().copied() {
+                        desired[core_idx] = Some(next);
+
+                        candidates.retain(|&x| x != next);
+                    }
+                }
+
+                Some(running) => {
+                    /*
+                     * If the currently running task is not in the
+                     * waiting candidates, simply keep it.
+                     */
+                    let best =
+                        candidates.first().copied();
+
+                    match best {
+                        None => {
+                            desired[core_idx] =
+                                Some(running);
+                        }
+
+                        Some(candidate) if candidate == running => {
+                            desired[core_idx] =
+                                Some(running);
+
+                            candidates.retain(
+                                |&x| x != running
+                            );
+                        }
+
+                        Some(candidate) => {
+                            let candidate_laxity =
+                                tasks[candidate]
+                                    .laxity(current_time);
+
+                            /*
+                             * Equation (8):
+                             *
+                             * L(candidate) >=
+                             * C_remaining(running) + 2a
+                             *
+                             * means DON'T preempt.
+                             *
+                             * Therefore preemption is allowed only when:
+                             *
+                             * L(candidate) <
+                             * C_remaining(running) + 2a
+                             */
+                            let preemption_threshold =
+                                tasks[running].remaining_time
+                                    + 2.0
+                                        * config
+                                            .context_switch_cost;
+
+                            /*
+                             * TTC margin / relaxation tie-band have
+                             * already been incorporated into the
+                             * candidate ordering.
+                             */
+                            if candidate_laxity
+                                < preemption_threshold
+                            {
+                                /*
+                                 * Preempt running task.
+                                 *
+                                 * The simulator keeps the preempted
+                                 * task in ready_queue, so it becomes
+                                 * eligible again on the next decision.
+                                 */
+                                desired[core_idx] =
+                                    Some(candidate);
+
+                                candidates.retain(
+                                    |&x| x != candidate
+                                );
+                            } else {
+                                /*
+                                 * Non-preemption condition satisfied.
+                                 */
+                                desired[core_idx] =
+                                    Some(running);
+
+                                candidates.retain(
+                                    |&x| x != running
+                                );
                             }
                         }
                     }
-                } else {
-                    desired[i] = Some(running_idx);
                 }
             }
         }
 
-        // 5. Fill idle cores with the best remaining top tasks
-        for i in 0..cores.len() {
-            if cores[i].is_switching || desired[i].is_some() { continue; }
-            if !top_tasks.is_empty() {
-                desired[i] = Some(top_tasks.remove(0));
+        /*
+         * ------------------------------------------------------------
+         * 6. Fill any remaining idle cores
+         * ------------------------------------------------------------
+         */
+        for core_idx in 0..cores.len() {
+            if cores[core_idx].is_switching {
+                continue;
+            }
+
+            if desired[core_idx].is_none() {
+                if let Some(next) =
+                    candidates.first().copied()
+                {
+                    desired[core_idx] = Some(next);
+
+                    candidates.retain(
+                        |&x| x != next
+                    );
+                }
             }
         }
 
         desired
     }
 }
-
 // ==========================================
 // 5. RUNTIME SCHEDULER SELECTION
 // ==========================================
