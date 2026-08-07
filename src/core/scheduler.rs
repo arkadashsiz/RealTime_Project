@@ -378,7 +378,7 @@ impl Scheduler for ProposedAlgorithm {
                 let r = relaxation(
                     theta_value,
                     normalized[i],
-                    tasks[idx].priority,
+                    tasks[idx].priority as f64,
                 );
 
                 (idx, r)
@@ -554,6 +554,211 @@ impl Scheduler for ProposedAlgorithm {
         desired
     }
 }
+
+pub struct EnvProposedAlgorithm;
+
+impl EnvProposedAlgorithm {
+    /// Safety margin for TTC comparisons.
+    const TTC_MARGIN: f64 = 0.1;
+
+    /// Relaxation tie-band ε_R.
+    const RELAXATION_TIE_BAND: f64 = 0.1;
+
+    /// Calculate TTC from the task's obstacle distance and the current
+    /// environmental conditions.
+    fn task_ttc(task: &Task, config: &SimConfig) -> f64 {
+        let d_eff = crate::core::task::effective_distance(
+            task.obstacle_distance,
+            config.tightness,
+        );
+
+        let lambda_val = f64::from(config.weather.lambda());
+
+        crate::core::task::time_to_collision(
+            d_eff,
+            lambda_val,
+        )
+        .unwrap_or(crate::core::task::FALLBACK_TTC)
+    }
+
+    /// Calculates the dynamic priority P_i(λ) based on the environment.
+    /// Expects (base_priority: f64, lambda: u8).
+    fn dynamic_priority(base_priority: f64, lambda: f64) -> f64 {
+    base_priority * (1.0 + lambda)
+}
+
+    /// Returns true when `a` should be preferred to `b` according to
+    /// the paper's lexicographic comparison rules.
+    fn preferred(
+        a: &Task,
+        b: &Task,
+        a_relaxation: f64,
+        b_relaxation: f64,
+        current_time: f64,
+        config: &SimConfig,
+    ) -> bool {
+        let la = a.laxity(current_time);
+        let lb = b.laxity(current_time);
+
+        // Rule 1: Non-negative laxity preferred over negative laxity
+        if la >= 0.0 && lb < 0.0 { return true; }
+        if la < 0.0 && lb >= 0.0 { return false; }
+
+        let ttc_a = Self::task_ttc(a, config);
+        let ttc_b = Self::task_ttc(b, config);
+
+        // Rule 2: TTC precedence independent of Relaxation
+        if ttc_a + Self::TTC_MARGIN > ttc_b { return true; }
+        if ttc_b + Self::TTC_MARGIN > ttc_a { return false; }
+
+        // Rule 3: Tie-breaker using TTC if relaxation values are close
+        if (a_relaxation - b_relaxation).abs() <= Self::RELAXATION_TIE_BAND {
+            return ttc_a < ttc_b;
+        }
+
+        // Otherwise lower relaxation wins
+        a_relaxation < b_relaxation
+    }
+}
+
+impl Scheduler for EnvProposedAlgorithm {
+    fn schedule(
+        &mut self,
+        ready_queue: &[usize],
+        cores: &[CoreView],
+        tasks: &[Task],
+        current_time: f64,
+        config: &SimConfig,
+    ) -> Vec<Option<usize>> {
+        let mut desired = vec![None; cores.len()];
+        let mut available_tasks = Vec::new();
+
+        // Filter out tasks currently undergoing a context switch
+        for &idx in ready_queue {
+            let mut assigned_to_switching_core = false;
+            for core in cores {
+                if core.is_switching && core.running_task == Some(idx) {
+                    assigned_to_switching_core = true;
+                    break;
+                }
+            }
+            if !assigned_to_switching_core {
+                available_tasks.push(idx);
+            }
+        }
+
+        // Drop tasks with negative laxity
+        available_tasks.retain(|&idx| tasks[idx].laxity(current_time) >= 0.0);
+
+        if available_tasks.is_empty() {
+            for (i, core) in cores.iter().enumerate() {
+                desired[i] = core.running_task;
+            }
+            return desired;
+        }
+
+        // 1. Calculate and normalize laxities
+        let laxities: Vec<f64> = available_tasks
+            .iter()
+            .map(|&idx| tasks[idx].laxity(current_time))
+            .collect();
+
+        let normalized = normalize_laxities(&laxities);
+        let theta_value = theta(f64::from(config.weather.lambda()));
+
+        // 2. Calculate Environment-Aware Relaxation
+        let mut ranked: Vec<(usize, f64)> = available_tasks
+            .iter()
+            .enumerate()
+            .map(|(i, &idx)| {
+                // Ensure correct argument ordering matching dynamic_priority(f64, u8)
+                let base_p = f64::from(tasks[idx].priority);
+                let env_priority = Self::dynamic_priority(
+                    base_p, 
+                    config.weather.lambda()
+                );
+
+                // R_i(λ) = θ(λ) * L_i + P_i(λ)
+                let r = relaxation(
+                    theta_value,
+                    normalized[i],
+                    env_priority,
+                );
+
+                (idx, r)
+            })
+            .collect();
+
+        // 3. Sort using lexicographic comparison rules
+        ranked.sort_by(|(idx_a, r_a), (idx_b, r_b)| {
+            if *idx_a == *idx_b { return std::cmp::Ordering::Equal; }
+
+            if Self::preferred(&tasks[*idx_a], &tasks[*idx_b], *r_a, *r_b, current_time, config) {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        });
+
+        let mut candidates: Vec<usize> = ranked.into_iter().map(|(idx, _)| idx).collect();
+
+        // 4. Preemption & Assignment Logic
+        for core_idx in 0..cores.len() {
+            if cores[core_idx].is_switching {
+                desired[core_idx] = cores[core_idx].running_task;
+                continue;
+            }
+
+            match cores[core_idx].running_task {
+                None => {
+                    if let Some(next) = candidates.first().copied() {
+                        desired[core_idx] = Some(next);
+                        candidates.retain(|&x| x != next);
+                    }
+                }
+                Some(running) => {
+                    match candidates.first().copied() {
+                        None => desired[core_idx] = Some(running),
+                        Some(candidate) if candidate == running => {
+                            desired[core_idx] = Some(running);
+                            candidates.retain(|&x| x != running);
+                        }
+                        Some(candidate) => {
+                            let candidate_laxity = tasks[candidate].laxity(current_time);
+                            let preemption_threshold = tasks[running].remaining_time 
+                                + 2.0 * config.context_switch_cost;
+
+                            // Allow preemption only if candidate laxity < C_remaining(running) + 2a
+                            if candidate_laxity < preemption_threshold {
+                                desired[core_idx] = Some(candidate);
+                                candidates.retain(|&x| x != candidate);
+                            } else {
+                                desired[core_idx] = Some(running);
+                                candidates.retain(|&x| x != running);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Fill remaining idle cores
+        for core_idx in 0..cores.len() {
+            if !cores[core_idx].is_switching && desired[core_idx].is_none() {
+                if let Some(next) = candidates.first().copied() {
+                    desired[core_idx] = Some(next);
+                    candidates.retain(|&x| x != next);
+                }
+            }
+        }
+
+        desired
+    }
+}
+
+
+
+
 // ==========================================
 // 5. RUNTIME SCHEDULER SELECTION
 // ==========================================
@@ -563,14 +768,16 @@ pub enum SchedulerKind {
     PartitionedEdf,
     Mllf,
     Proposed,
+    EnvProposed,
 }
 
 impl SchedulerKind {
-    pub const ALL: [SchedulerKind; 4] = [
+    pub const ALL: [SchedulerKind; 5] = [
         SchedulerKind::GlobalEdf,
         SchedulerKind::PartitionedEdf,
         SchedulerKind::Mllf,
         SchedulerKind::Proposed,
+        SchedulerKind::EnvProposed,
     ];
 
     pub fn parse(s: &str) -> Result<Self, String> {
@@ -579,6 +786,7 @@ impl SchedulerKind {
             "partitioned-edf" | "partitionededf" => Ok(SchedulerKind::PartitionedEdf),
             "mllf" => Ok(SchedulerKind::Mllf),
             "proposed" | "hybrid" => Ok(SchedulerKind::Proposed),
+            "env-proposed" | "env" | "extended-relaxation" => Ok(SchedulerKind::EnvProposed),
             other => Err(format!(
                 "unknown scheduler '{other}' (expected one of: {})",
                 SchedulerKind::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
@@ -592,6 +800,7 @@ impl SchedulerKind {
             SchedulerKind::PartitionedEdf => Box::new(PartitionedEdf::default()),
             SchedulerKind::Mllf => Box::new(Mllf),
             SchedulerKind::Proposed => Box::new(ProposedAlgorithm),
+            SchedulerKind::EnvProposed => Box::new(EnvProposedAlgorithm),
         }
     }
 
@@ -601,6 +810,7 @@ impl SchedulerKind {
             SchedulerKind::PartitionedEdf => "partitioned-edf",
             SchedulerKind::Mllf => "mllf",
             SchedulerKind::Proposed => "proposed",
+            SchedulerKind::EnvProposed => "env-proposed",
         }
     }
 }

@@ -33,6 +33,8 @@ SCHEDULER_STYLES = {
     "partitioned-edf": {"marker": "s", "linestyle": "--"},
     "mllf": {"marker": "^", "linestyle": "-."},
     "proposed": {"marker": "D", "linestyle": "-"},
+    "env-proposed": {"marker": "v", "linestyle": "--"},
+    "env": {"marker": "v", "linestyle": "--"},
 }
 
 PRIORITY_COLS = ["misses_p1", "misses_p2", "misses_p3", "misses_p4", "misses_p5"]

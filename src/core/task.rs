@@ -151,6 +151,6 @@ pub fn normalize_laxities(laxities: &[f64]) -> Vec<f64> {
         .collect()
 }
 
-pub fn relaxation(theta_val: f64, l_norm: f64, priority: Priority) -> f64 {
-    theta_val * l_norm + priority as f64
+pub fn relaxation(theta_val: f64, l_norm: f64, priority: f64) -> f64 {
+    theta_val * l_norm + priority
 }

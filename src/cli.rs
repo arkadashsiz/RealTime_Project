@@ -1,25 +1,4 @@
 // src/cli.rs
-//
-// Minimal, dependency-free CLI parsing (no `clap`, so this can be
-// eyeballed for correctness without a Rust toolchain to compile it —
-// see the top-level README's note on why nothing here has been built).
-//
-// Usage:
-//   cargo run --release                       # same as before: demo + sweep, all defaults
-//   cargo run --release -- demo  [flags...]   # just the single demo episode
-//   cargo run --release -- sweep [flags...]   # just the Phase 1 sweep
-//   cargo run --release -- --help             # usage text
-//
-// Demo flags:
-//   --scheduler <global-edf|partitioned-edf|mllf|proposed>
-//   --cores <N>                 --weather <sunny|rainy|snowy>
-//   --tightness <F>             --utilization <F>
-//   --context-switch-cost <F>   --critical-coefficient <F>
-//   --seed <N>                  --tasks <N>
-//
-// Sweep flags:
-//   --scheduler <global-edf|partitioned-edf|mllf|proposed>
-//   --runs <N>                  (episodes averaged per swept configuration)
 
 use crate::core::generator::DEFAULT_TASKS_PER_ROUND;
 use crate::core::scheduler::SchedulerKind;
@@ -104,9 +83,6 @@ pub fn parse_args() -> Result<Command, String> {
     }
 }
 
-/// Pulls `--flag value` pairs out of `args`. Shared by both subcommand
-/// parsers below so flag-splitting logic (and its error message) lives
-/// in exactly one place.
 fn next_flag_value<'a>(args: &'a [String], i: usize) -> Result<&'a str, String> {
     args.get(i + 1).map(String::as_str).ok_or_else(|| format!("flag '{}' expects a value", args[i]))
 }
@@ -165,29 +141,29 @@ pub fn print_usage() {
         "ADAS Hybrid Scheduler — Phase 1
 
 USAGE:
-    cargo run --release                       Run the demo episode, then the Phase 1 sweep (all defaults)
-    cargo run --release -- demo  [flags]      Run only the single demo episode
-    cargo run --release -- sweep [flags]      Run only the Phase 1 sweep
-    cargo run --release -- --help             Show this message
+    cargo run --release                         Run the demo episode, then the Phase 1 sweep (all defaults)
+    cargo run --release -- demo  [flags]        Run only the single demo episode
+    cargo run --release -- sweep [flags]        Run only the Phase 1 sweep
+    cargo run --release -- --help               Show this message
 
 DEMO flags:
-    --scheduler <global-edf|partitioned-edf|mllf|proposed> (default: global-edf)
-    --cores <N>                                            (default: 2)
-    --weather <sunny|rainy|snowy>                          (default: sunny)
-    --tightness <F>                                        (default: 1.0, spec range [0.5, 2.46])
-    --utilization <F>                                      (default: 1.0)
-    --context-switch-cost <F>                              (default: 1.0)
-    --critical-coefficient <F>                             (default: 5.0, see README assumption 3)
-    --seed <N>                                             (default: 42)
-    --tasks <N>                                            (default: {DEFAULT_TASKS_PER_ROUND})
+    --scheduler <global-edf|partitioned-edf|mllf|proposed|env-proposed> (default: global-edf)
+    --cores <N>                                 (default: 2)
+    --weather <sunny|rainy|snowy>               (default: sunny)
+    --tightness <F>                             (default: 1.0, spec range [0.5, 2.46])
+    --utilization <F>                           (default: 1.0)
+    --context-switch-cost <F>                   (default: 1.0)
+    --critical-coefficient <F>                  (default: 5.0)
+    --seed <N>                                  (default: 42)
+    --tasks <N>                                 (default: {DEFAULT_TASKS_PER_ROUND})
 
 SWEEP flags:
-    --scheduler <global-edf|partitioned-edf|mllf|proposed> (default: global-edf; applied to every swept configuration)
-    --runs <N>                                             (episodes averaged per configuration; default: 20)
+    --scheduler <global-edf|partitioned-edf|mllf|proposed|env-proposed> (default: global-edf; applied to every swept configuration)
+    --runs <N>                                  (episodes averaged per configuration; default: 20)
 
 EXAMPLES:
-    cargo run --release -- demo --scheduler proposed --cores 4 --weather rainy --tightness 1.5
-    cargo run --release -- sweep --scheduler mllf --runs 20
+    cargo run --release -- demo --scheduler env-proposed --cores 4 --weather rainy --tightness 1.5
+    cargo run --release -- sweep --scheduler env-proposed --runs 20
 "
     );
 }
