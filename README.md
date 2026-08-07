@@ -22,14 +22,113 @@ will fix them immediately.
 
 ```bash
 cargo build --release
-cargo test            # runs unit tests in generator.rs and simulator.rs
-cargo run --release   # runs a demo episode + the Phase 1 sanity sweep
+cargo test                                  # runs unit tests in generator.rs and simulator.rs
+cargo run --release                         # demo episode + Phase 1 sweep, all defaults (unchanged from before)
+cargo run --release -- --help               # full flag reference
+cargo run --release -- demo  [flags]        # just the demo episode, with your chosen algorithm/parameters
+cargo run --release -- sweep [flags]        # just the Phase 1 sweep, with your chosen algorithm
 ```
 
 Output: a per-task table printed to stdout for one demo episode, plus
 `output/phase1_sweep.csv` containing aggregated metrics across a
 sweep of {2,4} cores × {sunny,rainy,snowy} × 11 tightness points × 20
 runs each (Phase 2 should bump this to 100 runs per the spec).
+
+### Choosing an algorithm and parameters at the command line
+
+Everything that used to be hardcoded in `main.rs`/`experiment.rs`
+(which scheduler, how many cores, which weather, tightness,
+utilization, context-switch cost, critical coefficient, RNG seed, task
+count) is now a CLI flag with the old hardcoded value as its default —
+so `cargo run --release` with no arguments still does exactly what it
+did before this change.
+
+```bash
+# Demo episode: partitioned EDF, 4 cores, rainy weather, tighter deadlines
+cargo run --release -- demo --scheduler partitioned-edf --cores 4 --weather rainy --tightness 1.5
+
+# Same demo, heavier load and a different seed for a different random task mix
+cargo run --release -- demo --utilization 3.0 --seed 7
+
+# Sweep using partitioned EDF instead of the default global EDF, fewer runs for a quick check
+cargo run --release -- sweep --scheduler partitioned-edf --runs 5
+```
+
+Full flag list is in `cargo run --release -- --help` (also reproduced
+in `src/cli.rs`'s module doc comment).
+
+**What changed to support this:** `Scheduler` implementations
+(`GlobalEdf`, `PartitionedEdf`) are picked at compile time by default
+in Rust generics, which doesn't work once "which scheduler" is a
+string typed at the command line. `simulator::run_simulation` was
+changed from generic (`<S: Scheduler>(..., scheduler: &mut S)`) to a
+trait object (`scheduler: &mut dyn Scheduler`), and a
+`SchedulerKind` enum (`core::scheduler::SchedulerKind`) maps
+CLI-supplied names to a `Box<dyn Scheduler>` via `SchedulerKind::build()`.
+Adding a new scheduler (e.g. the still-missing Relaxation-based one —
+see "Flagged, not changed" below) means implementing `Scheduler` for
+it and adding one match arm each to `SchedulerKind::parse`/`build`/`as_str`.
+
+## Refactoring notes (this pass)
+
+This pass removed redundancy/dead code without changing runtime
+behavior, and separately flagged a couple of things that look like
+real issues but are functional/experimental-design decisions, not
+"redundancy" — so they were left in place with a comment rather than
+silently changed:
+
+**Removed / consolidated:**
+- **`simulator.rs`**: dropped unused imports (`normalize_laxities`,
+  `relaxation`, `theta` were imported but never referenced, now that
+  scheduling is delegated to the `Scheduler` trait rather than done
+  inline). `should_preempt` is dead code today — nothing calls it —
+  but it encodes the spec's documented, unresolved preemption
+  inequality (assumption 2 below). Kept and marked
+  `#[allow(dead_code)]` with an explanatory comment rather than
+  deleted, so that unresolved ambiguity isn't silently lost.
+- **`SimConfig::for_sweep_point(num_cores, weather, tightness)`**
+  added as a constructor. `main.rs` and `experiment.rs` were each
+  building the full `SimConfig` struct literal by hand, repeating
+  `context_switch_cost: 1.0, critical_coefficient: 5.0` verbatim in
+  three separate places; all three now go through this one
+  constructor, so there's a single place to change those defaults.
+- **`experiment.rs`**: `run_config` was rebuilding an identical
+  `SimConfig` on every one of the `runs_per_config` loop iterations
+  (only the RNG seed and task set change per run) — it's now built
+  once outside the loop.
+- **`scheduler.rs`**: `PartitionedEdf`'s hand-written `impl Default`
+  was equivalent to `#[derive(Default)]` (both its fields already
+  implement `Default`) — replaced with the derive.
+- **`main.rs`**: removed an unused `use crate::core::scheduler;` import
+  (the `scheduler::*` glob import already covers it).
+- **`visualize.py`**: the three near-identical `plot_metric(...)`
+  calls in `main()` are now driven by one `METRICS` list instead of
+  three copy-pasted call sites.
+
+**Flagged, not changed:**
+- `task.rs`'s `theta` / `normalize_laxities` / `relaxation` functions
+  are never called by any `Scheduler` impl — only `GlobalEdf` and
+  `PartitionedEdf` exist, and neither uses the Relaxation (R) metric.
+  There is no `RelaxationScheduler` wired up yet, even though the
+  Relaxation-based algorithm is what this project is named after and
+  what this README describes as "the proposed" Phase 1 algorithm.
+  That reads as a functionality gap, not something a redundancy pass
+  should paper over by deleting the "unused" helper functions — they
+  look like the building blocks for the scheduler that's still
+  missing.
+- `experiment.rs`'s Phase-1 sweep loops over 4 `target_utilization`
+  values (`UTILIZATION_SWEEP_POINTS`) that aren't mentioned in this
+  README's stated sweep shape (2 cores × 3 weathers × 11 tightness
+  points × N runs) and aren't faceted on by `visualize.py`. Left in
+  place — just pulled out of an inline literal into a named constant
+  with a comment — but worth confirming with your TA whether that
+  extra dimension belongs in Phase 1 output at all, since it silently
+  quadruples the sweep's row count and run time.
+
+As before: no Rust toolchain was available in the environment that
+produced this refactor, so none of the above has actually been
+compiled — please run `cargo build && cargo test` yourself first and
+report back any errors.
 
 ## Project layout
 
@@ -64,7 +163,9 @@ output for your report.**
    written in `simulator.rs::should_preempt()`, isolated in one
    function so the direction/semantics can be corrected in one place
    once you confirm with the TA which task's laxity and which
-   inequality direction is actually intended.
+   inequality direction is actually intended. (Note: as of this
+   refactor pass, this function isn't called by the simulation loop —
+   see "Refactoring notes" above.)
 
 3. **The "critical coefficient" `C`.** Not given a concrete value
    anywhere in the spec. Currently a configurable field

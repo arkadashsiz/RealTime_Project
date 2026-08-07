@@ -73,10 +73,17 @@ pub struct SimResult {
     pub tasks_by_priority: [usize; 5],
 }
 
-pub fn run_simulation<S: Scheduler>(
+/// Runs one simulation episode against a runtime-selected `Scheduler`.
+///
+/// Takes `&mut dyn Scheduler` (a trait object) rather than being
+/// generic over `S: Scheduler`, specifically so callers can pick the
+/// scheduling algorithm at runtime — e.g. from a `SchedulerKind`
+/// parsed from CLI flags (see `cli.rs`) — instead of the algorithm
+/// having to be nailed down at compile time.
+pub fn run_simulation(
     tasks: &mut [Task],
     config: &SimConfig,
-    scheduler: &mut S,
+    scheduler: &mut dyn Scheduler,
 ) -> (Vec<SimEvent>, SimResult) {
     let mut events = Vec::new();
     let mut cores: Vec<Core> = (0..config.num_cores).map(|_| Core { running: None }).collect();

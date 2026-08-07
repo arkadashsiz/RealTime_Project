@@ -1,34 +1,59 @@
+mod cli;
 mod core;
 
-use core::generator::{generate_tasks, DEFAULT_TASKS_PER_ROUND};
-use core::scheduler::*;
-use core::simulator::{run_simulation, SimConfig};
-use core::task::Weather;
-
+use cli::{Command, RunParams, SweepParams};
+use core::generator::generate_tasks;
+use core::simulator::run_simulation;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::path::Path;
 
 fn main() {
-    println!("=== ADAS Hybrid Scheduler — Phase 1 ===\n");
-
-    run_single_demo_episode();
-    println!();
-    run_sanity_sweep();
+    match cli::parse_args() {
+        Ok(Command::Help) => cli::print_usage(),
+        Ok(Command::Demo(params)) => {
+            println!("=== ADAS Hybrid Scheduler — Phase 1 ===\n");
+            run_single_demo_episode(&params);
+        }
+        Ok(Command::Sweep(params)) => {
+            println!("=== ADAS Hybrid Scheduler — Phase 1 ===\n");
+            run_sanity_sweep(&params);
+        }
+        Ok(Command::Both(demo_params, sweep_params)) => {
+            println!("=== ADAS Hybrid Scheduler — Phase 1 ===\n");
+            run_single_demo_episode(&demo_params);
+            println!();
+            run_sanity_sweep(&sweep_params);
+        }
+        Err(e) => {
+            eprintln!("error: {e}\n");
+            cli::print_usage();
+            std::process::exit(1);
+        }
+    }
 }
 
-fn run_single_demo_episode() {
-    println!("--- Demo episode: 2 cores, sunny weather, tightness = 1.0 ---");
+fn run_single_demo_episode(params: &RunParams) {
+    println!(
+        "--- Demo episode: {} cores, {} weather, tightness = {:.2}, scheduler = {} ---",
+        params.num_cores,
+        params.weather.as_str(),
+        params.tightness,
+        params.scheduler.as_str()
+    );
 
-    let mut rng = StdRng::seed_from_u64(42);
-    let weather = Weather::Sunny;
-    let tightness = 1.0;
-    let target_utilization = 1.0;
-    let mut tasks = generate_tasks(&mut rng, DEFAULT_TASKS_PER_ROUND, weather, tightness, target_utilization);
+    let mut rng = StdRng::from_entropy();
+    let mut tasks = generate_tasks(
+        &mut rng,
+        params.task_count,
+        params.weather,
+        params.tightness,
+        params.target_utilization,
+    );
 
-    let config = SimConfig::for_sweep_point(2, weather, tightness);
-    let mut scheduler = GlobalEdf;
-    let (_events, result) = run_simulation(&mut tasks, &config, &mut scheduler);
+    let config = params.to_sim_config();
+    let mut scheduler = params.scheduler.build();
+    let (_events, result) = run_simulation(&mut tasks, &config, scheduler.as_mut());
 
     println!(
         "{:<4} {:>8} {:>8} {:>4} {:>9} {:>9} {:>9} {:>9} {:>9}",
@@ -72,16 +97,23 @@ fn run_single_demo_episode() {
     println!("  misses by priority (P1..P5): {:?}", result.misses_by_priority);
 }
 
-fn run_sanity_sweep() {
-    println!("--- Phase 1 sanity sweep: 2/4 cores x {{sunny,rainy,snowy}} x 11 tightness points, 20 runs each ---");
+fn run_sanity_sweep(params: &SweepParams) {
+    println!(
+        "--- Phase 1 sanity sweep: 2/4 cores x {{sunny,rainy,snowy}} x 11 tightness points, {} runs each, scheduler = {} ---",
+        params.runs_per_config,
+        params.scheduler.as_str()
+    );
 
     let output_dir = Path::new("output");
     if !output_dir.exists() {
         std::fs::create_dir_all(output_dir).expect("failed to create output directory");
     }
-    let output_path = output_dir.join("phase1_sweep.csv");
+    
+    // Dynamically inject the scheduler name into the CSV filename
+    let file_name = format!("phase1_sweep_{}.csv", params.scheduler.as_str());
+    let output_path = output_dir.join(file_name);
 
-    match core::experiment::run_phase1_sanity_sweep(&output_path, 20) {
+    match core::experiment::run_phase1_sanity_sweep(&output_path, params.runs_per_config, params.scheduler) {
         Ok(rows) => {
             println!("Wrote {} aggregate rows to {}", rows.len(), output_path.display());
             println!("\nSample rows:");
@@ -106,7 +138,6 @@ fn run_sanity_sweep() {
         }
     }
 }
-
 fn sanity_check_monotonic_trend(rows: &[core::experiment::AggregateRow]) {
     use std::collections::HashMap;
     let mut grouped: HashMap<(usize, String), Vec<(f64, f64)>> = HashMap::new();

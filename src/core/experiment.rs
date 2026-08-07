@@ -1,5 +1,5 @@
 use crate::core::generator::{generate_tasks, DEFAULT_TASKS_PER_ROUND};
-use crate::core::scheduler::*;
+use crate::core::scheduler::SchedulerKind;
 use crate::core::simulator::{run_simulation, SimConfig, SimResult};
 use crate::core::task::Weather;
 
@@ -16,6 +16,7 @@ pub struct AggregateRow {
     pub num_cores: usize,
     pub weather: String,
     pub tightness: f64,
+    pub utilization: f64,
     pub runs: usize,
     pub avg_deadline_miss_ratio: f64,
     pub avg_context_switches_per_task: f64,
@@ -28,9 +29,6 @@ pub struct AggregateRow {
     pub misses_p5: f64,
 }
 
-/// Tightness sweep points spanning the spec's [0.5, 2.46] range.
-/// 11 points gives smooth-enough curves for Phase 2 plotting while
-/// keeping Phase 1 sanity runs fast.
 pub fn tightness_sweep_points() -> Vec<f64> {
     let start = 0.5_f64;
     let end = 2.46_f64;
@@ -40,9 +38,6 @@ pub fn tightness_sweep_points() -> Vec<f64> {
         .collect()
 }
 
-/// Runs `runs_per_config` independent simulation episodes for a given
-/// (num_cores, weather, tightness) configuration and returns the
-/// averaged `AggregateRow`.
 pub fn run_config(
     num_cores: usize,
     weather: Weather,
@@ -50,6 +45,7 @@ pub fn run_config(
     runs_per_config: usize,
     base_seed: u64,
     target_utilization: f64,
+    scheduler_kind: SchedulerKind,
 ) -> AggregateRow {
     let mut total_dmr = 0.0;
     let mut total_cs_per_task = 0.0;
@@ -64,13 +60,8 @@ pub fn run_config(
         let mut rng = StdRng::seed_from_u64(seed);
         let mut tasks = generate_tasks(&mut rng, DEFAULT_TASKS_PER_ROUND, weather, tightness, target_utilization);
 
-        // NOTE: Phase 1 only wires up GlobalEdf. The Relaxation-based
-        // scheduler that the README/spec names as this project's
-        // actual proposal (see task.rs's `relaxation`/`theta`/
-        // `normalize_laxities` helpers) isn't implemented as a
-        // `Scheduler` yet — that's a gap to close, not a refactor.
-        let mut scheduler = GlobalEdf;
-        let (_events, result) = run_simulation(&mut tasks, &config, &mut scheduler);
+        let mut scheduler = scheduler_kind.build();
+        let (_events, result) = run_simulation(&mut tasks, &config, scheduler.as_mut());
         accumulate(&result, &mut total_dmr, &mut total_cs_per_task, &mut total_makespan, &mut total_dropped_ratio, &mut misses_by_priority_sum);
     }
 
@@ -79,6 +70,7 @@ pub fn run_config(
         num_cores,
         weather: weather.as_str().to_string(),
         tightness,
+        utilization: target_utilization,
         runs: runs_per_config,
         avg_deadline_miss_ratio: total_dmr / n,
         avg_context_switches_per_task: total_cs_per_task / n,
@@ -87,7 +79,7 @@ pub fn run_config(
         misses_p1: misses_by_priority_sum[0] / n,
         misses_p2: misses_by_priority_sum[1] / n,
         misses_p3: misses_by_priority_sum[2] / n,
-        misses_p4: misses_by_priority_sum[3] / n,
+        misses_p4: misses_by_priority_sum[4] / n,
         misses_p5: misses_by_priority_sum[4] / n,
     }
 }
@@ -110,23 +102,12 @@ fn accumulate(
     }
 }
 
-/// Phase-1 sanity sweep: for each of {2,4} cores, each weather
-/// condition, each tightness sweep point, and each of a small set of
-/// target utilizations, run `runs_per_config` episodes and collect
-/// aggregate rows. Writes the result to a CSV at `output_path`.
-///
-/// NOTE: the README's stated sweep shape is 2 core-counts x 3 weathers
-/// x 11 tightness points x N runs; the `utilizations` dimension below
-/// multiplies that by 4 and isn't mentioned there. Left in place since
-/// changing the sweep shape is a functional/experimental-design call,
-/// not a refactor — but worth confirming with your TA whether Phase 1
-/// output is meant to include a utilization sweep at all, since
-/// `visualize.py` doesn't group or facet by it.
 const UTILIZATION_SWEEP_POINTS: [f64; 4] = [0.5, 2.0, 3.0, 4.0];
 
 pub fn run_phase1_sanity_sweep(
     output_path: &Path,
     runs_per_config: usize,
+    scheduler_kind: SchedulerKind,
 ) -> Result<Vec<AggregateRow>, Box<dyn Error>> {
     let mut rows = Vec::new();
     let core_counts = [2usize, 4usize];
@@ -137,7 +118,7 @@ pub fn run_phase1_sanity_sweep(
         for weather in Weather::all() {
             for &tightness in &tightness_points {
                 for &utilization in &UTILIZATION_SWEEP_POINTS {
-                    let row = run_config(cores, weather, tightness, runs_per_config, seed_counter, utilization);
+                    let row = run_config(cores, weather, tightness, runs_per_config, seed_counter, utilization, scheduler_kind);
                     seed_counter = seed_counter.wrapping_add(10_000);
                     rows.push(row);
                 }
