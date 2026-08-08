@@ -63,6 +63,7 @@ pub enum Command {
     Help,
     Demo(RunParams),
     Sweep(SweepParams),
+    Generate(RunParams), // <-- Add this variant
     Both(RunParams, SweepParams),
 }
 
@@ -77,12 +78,12 @@ pub fn parse_args() -> Result<Command, String> {
         "-h" | "--help" => Ok(Command::Help),
         "demo" => Ok(Command::Demo(parse_run_params(&args[1..])?)),
         "sweep" => Ok(Command::Sweep(parse_sweep_params(&args[1..])?)),
+        "generate" => Ok(Command::Generate(parse_run_params(&args[1..])?)), // <-- Add this match arm
         other => Err(format!(
-            "unknown subcommand '{other}' (expected 'demo', 'sweep', or no subcommand to run both; try --help)"
+            "unknown subcommand '{other}' (expected 'demo', 'sweep', 'generate', or no subcommand to run both; try --help)"
         )),
     }
 }
-
 fn next_flag_value<'a>(args: &'a [String], i: usize) -> Result<&'a str, String> {
     args.get(i + 1).map(String::as_str).ok_or_else(|| format!("flag '{}' expects a value", args[i]))
 }
@@ -141,29 +142,30 @@ pub fn print_usage() {
         "ADAS Hybrid Scheduler — Phase 1
 
 USAGE:
-    cargo run --release                         Run the demo episode, then the Phase 1 sweep (all defaults)
-    cargo run --release -- demo  [flags]        Run only the single demo episode
-    cargo run --release -- sweep [flags]        Run only the Phase 1 sweep
-    cargo run --release -- --help               Show this message
+    cargo run --release                                         Run the demo episode, then the Phase 1 sweep (all defaults)
+    cargo run --release -- demo     [flags]                     Run only the single demo episode
+    cargo run --release -- sweep    [flags]                     Run only the Phase 1 sweep
+    cargo run --release -- generate [flags]                     Generate a single task set and export to CSV
+    cargo run --release -- --help                               Show this message
 
-DEMO flags:
+DEMO / GENERATE flags:
     --scheduler <global-edf|partitioned-edf|mllf|proposed|env-proposed> (default: global-edf)
-    --cores <N>                                 (default: 2)
-    --weather <sunny|rainy|snowy>               (default: sunny)
-    --tightness <F>                             (default: 1.0, spec range [0.5, 2.46])
-    --utilization <F>                           (default: 1.0)
-    --context-switch-cost <F>                   (default: 1.0)
-    --critical-coefficient <F>                  (default: 5.0)
-    --seed <N>                                  (default: 42)
-    --tasks <N>                                 (default: {DEFAULT_TASKS_PER_ROUND})
+    --cores <N>                                                 (default: 2)
+    --weather <sunny|rainy|snowy>                               (default: sunny)
+    --tightness <F>                                             (default: 1.0, spec range [0.5, 2.46])
+    --utilization <F>                                           (default: 1.0)
+    --context-switch-cost <F>                                   (default: 1.0)
+    --critical-coefficient <F>                                  (default: 5.0)
+    --seed <N>                                                  (default: 42)
+    --tasks <N>                                                 (default: {DEFAULT_TASKS_PER_ROUND})
 
 SWEEP flags:
-    --scheduler <global-edf|partitioned-edf|mllf|proposed|env-proposed> (default: global-edf; applied to every swept configuration)
-    --runs <N>                                  (episodes averaged per configuration; default: 20)
+    --scheduler <global-edf|partitioned-edf|mllf|proposed|env-proposed> (default: global-edf)
+    --runs <N>                                                  (episodes averaged per configuration; default: 20)
 
 EXAMPLES:
-    cargo run --release -- demo --scheduler env-proposed --cores 4 --weather rainy --tightness 1.5
-    cargo run --release -- sweep --scheduler env-proposed --runs 20
+    cargo run --release -- generate --weather rainy --tightness 1.5 --tasks 30
+    cargo run --release -- sweep --scheduler env-proposed --runs 2
 "
     );
 }

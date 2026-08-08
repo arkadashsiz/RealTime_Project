@@ -7,7 +7,8 @@ use core::simulator::run_simulation;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::path::Path;
-
+use std::fs::File;
+use std::io::Write;
 fn main() {
     match cli::parse_args() {
         Ok(Command::Help) => cli::print_usage(),
@@ -18,6 +19,10 @@ fn main() {
         Ok(Command::Sweep(params)) => {
             println!("=== ADAS Hybrid Scheduler — Phase 1 ===\n");
             run_sanity_sweep(&params);
+        }
+        Ok(Command::Generate(params)) => {
+            println!("=== ADAS Hybrid Scheduler — Phase 1 ===\n");
+            run_generate_taskset_csv(&params);
         }
         Ok(Command::Both(demo_params, sweep_params)) => {
             println!("=== ADAS Hybrid Scheduler — Phase 1 ===\n");
@@ -32,7 +37,6 @@ fn main() {
         }
     }
 }
-
 fn run_single_demo_episode(params: &RunParams) {
     println!(
         "--- Demo episode: {} cores, {} weather, tightness = {:.2}, scheduler = {} ---",
@@ -156,4 +160,59 @@ fn sanity_check_monotonic_trend(rows: &[core::experiment::AggregateRow]) {
             );
         }
     }
+}
+
+
+
+fn run_generate_taskset_csv(params: &RunParams) {
+    let output_dir = Path::new("output");
+    if !output_dir.exists() {
+        std::fs::create_dir_all(output_dir).expect("failed to create output directory");
+    }
+
+    let file_name = format!(
+        "taskset_{}_{}_t{:.2}.csv",
+        params.task_count,
+        params.weather.as_str(),
+        params.tightness
+    );
+    let output_path = output_dir.join(file_name);
+
+    println!(
+        "--- Generating Task Set CSV: {} tasks, {} weather, tightness = {:.2} ---",
+        params.task_count,
+        params.weather.as_str(),
+        params.tightness
+    );
+
+    let mut rng = StdRng::from_entropy();
+    let tasks = generate_tasks(
+        &mut rng,
+        params.task_count,
+        params.weather,
+        params.tightness,
+        params.target_utilization,
+    );
+
+    let mut file = File::create(&output_path).expect("Failed to create CSV file");
+    
+    // Write CSV header
+    writeln!(file, "id,arrival_time,execution_time,priority,obstacle_distance,deadline")
+        .expect("Failed to write CSV header");
+
+    // Write task rows
+    for tk in tasks {
+        writeln!(
+            file,
+            "{},{:.3},{:.3},{},{:.3},{:.3}",
+            tk.id,
+            tk.arrival_time,
+            tk.execution_time,
+            tk.priority,
+            tk.obstacle_distance,
+            tk.deadline
+        ).expect("Failed to write CSV row");
+    }
+
+    println!("Success! Wrote task set to {}\n", output_path.display());
 }

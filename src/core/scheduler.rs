@@ -1,6 +1,6 @@
 // src/core/scheduler.rs
 use crate::core::simulator::SimConfig;
-use crate::core::task::{normalize_laxities, relaxation, theta, Task};
+use crate::core::task::Task;
 use std::collections::HashMap;
 
 /// A snapshot of a core's current state, provided to the scheduler.
@@ -41,45 +41,81 @@ impl Scheduler for GlobalEdf {
         _current_time: f64,
         _config: &SimConfig,
     ) -> Vec<Option<usize>> {
-        let mut desired = vec![None; cores.len()];
-        let mut available_tasks = ready_queue.to_vec();
+        let mut ready_candidates = Vec::new();
+        for &idx in ready_queue {
+            let mut assigned = false;
+            for core in cores {
+                if core.is_switching && core.running_task == Some(idx) {
+                    assigned = true;
+                    break;
+                }
+            }
+            if !assigned {
+                ready_candidates.push(idx);
+            }
+        }
 
-        // 1. Gather all tasks that aren't locked in a context switch
+        let mut available_tasks = ready_candidates;
+        for core in cores {
+            if !core.is_switching {
+                if let Some(idx) = core.running_task {
+                    if !available_tasks.contains(&idx) {
+                        available_tasks.push(idx);
+                    }
+                }
+            }
+        }
+
+        // Sort by Earliest Deadline First, with task_idx as a deterministic tie-breaker
+        available_tasks.sort_by(|&a, &b| {
+            tasks[a].deadline.partial_cmp(&tasks[b].deadline).unwrap().then(a.cmp(&b))
+        });
+
+        let mut candidates = available_tasks;
+        let mut desired = vec![None; cores.len()];
+
+        // Pass 1: Handle context switching (locked)
         for (i, core) in cores.iter().enumerate() {
             if core.is_switching {
                 desired[i] = core.running_task;
                 if let Some(t) = core.running_task {
-                    available_tasks.retain(|&idx| idx != t);
+                    candidates.retain(|&x| x != t);
                 }
             }
         }
 
-        // 2. Sort by Earliest Deadline First
-        available_tasks.sort_by(|&a, &b| tasks[a].deadline.partial_cmp(&tasks[b].deadline).unwrap());
-
-        // 3. Identify the highest priority tasks we have capacity for
-        let unlocked_cores = cores.iter().filter(|c| !c.is_switching).count();
-        let mut top_tasks: Vec<usize> = available_tasks.into_iter().take(unlocked_cores).collect();
-
-        // 4. Pass 1 (Affinity): Keep tasks on their current cores to avoid context switches
-        for i in 0..cores.len() {
-            if cores[i].is_switching {
-                continue;
+        // Pass 2: Fill currently idle cores
+        for (i, core) in cores.iter().enumerate() {
+            if !core.is_switching && core.running_task.is_none() {
+                if let Some(next) = candidates.first().copied() {
+                    desired[i] = Some(next);
+                    candidates.retain(|&x| x != next);
+                }
             }
-            if let Some(running) = cores[i].running_task {
-                if let Some(pos) = top_tasks.iter().position(|&t| t == running) {
+        }
+
+        // Pass 3: Preemption check for busy cores
+        for (i, core) in cores.iter().enumerate() {
+            if desired[i].is_some() { continue; }
+            if let Some(running) = core.running_task {
+                if let Some(best) = candidates.first().copied() {
+                    if best == running {
+                        desired[i] = Some(running);
+                        candidates.retain(|&x| x != running);
+                    } else {
+                        // Strict preemption condition for EDF
+                        if tasks[best].deadline < tasks[running].deadline {
+                            desired[i] = Some(best);
+                            candidates.retain(|&x| x != best);
+                        } else {
+                            desired[i] = Some(running);
+                            candidates.retain(|&x| x != running);
+                        }
+                    }
+                } else {
                     desired[i] = Some(running);
-                    top_tasks.remove(pos); // Task is accounted for
                 }
             }
-        }
-
-        // 5. Pass 2: Assign remaining high-priority tasks to remaining idle/preempted cores
-        for i in 0..cores.len() {
-            if cores[i].is_switching || desired[i].is_some() {
-                continue;
-            }
-            desired[i] = top_tasks.pop();
         }
 
         desired
@@ -126,8 +162,10 @@ impl Scheduler for PartitionedEdf {
                 .filter(|t| self.task_to_core.get(t) == Some(&core_idx))
                 .collect();
 
-            // 2. Sort by deadline
-            core_tasks.sort_by(|&a, &b| tasks[a].deadline.partial_cmp(&tasks[b].deadline).unwrap());
+            // 2. Sort by deadline with deterministic tie-breaker
+            core_tasks.sort_by(|&a, &b| {
+                tasks[a].deadline.partial_cmp(&tasks[b].deadline).unwrap().then(a.cmp(&b))
+            });
 
             // 3. Pick the single best task for this core
             desired[core_idx] = core_tasks.first().copied();
@@ -151,46 +189,79 @@ impl Scheduler for Mllf {
         current_time: f64,
         _config: &SimConfig,
     ) -> Vec<Option<usize>> {
-        let mut desired = vec![None; cores.len()];
-        let mut available_tasks = ready_queue.to_vec();
+        let mut ready_candidates = Vec::new();
+        for &idx in ready_queue {
+            let mut assigned = false;
+            for core in cores {
+                if core.is_switching && core.running_task == Some(idx) {
+                    assigned = true;
+                    break;
+                }
+            }
+            if !assigned {
+                ready_candidates.push(idx);
+            }
+        }
 
-        // 1. Filter out tasks locked in a context switch
+        let mut available_tasks = ready_candidates;
+        for core in cores {
+            if !core.is_switching {
+                if let Some(idx) = core.running_task {
+                    if !available_tasks.contains(&idx) {
+                        available_tasks.push(idx);
+                    }
+                }
+            }
+        }
+
+        // Sort by Laxity (Lowest First), task_idx as tie-breaker
+        available_tasks.sort_by(|&a, &b| {
+            let lax_a = tasks[a].laxity(current_time);
+            let lax_b = tasks[b].laxity(current_time);
+            lax_a.partial_cmp(&lax_b).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(&b))
+        });
+
+        let mut candidates = available_tasks;
+        let mut desired = vec![None; cores.len()];
+
         for (i, core) in cores.iter().enumerate() {
             if core.is_switching {
                 desired[i] = core.running_task;
                 if let Some(t) = core.running_task {
-                    available_tasks.retain(|&idx| idx != t);
+                    candidates.retain(|&x| x != t);
                 }
             }
         }
 
-        // 2. Sort by Laxity (Lowest First)
-        available_tasks.sort_by(|&a, &b| {
-            let laxity_a = tasks[a].laxity(current_time);
-            let laxity_b = tasks[b].laxity(current_time);
-            laxity_a.partial_cmp(&laxity_b).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        for (i, core) in cores.iter().enumerate() {
+            if !core.is_switching && core.running_task.is_none() {
+                if let Some(next) = candidates.first().copied() {
+                    desired[i] = Some(next);
+                    candidates.retain(|&x| x != next);
+                }
+            }
+        }
 
-        // 3. Affinity Pass
-        let unlocked_cores = cores.iter().filter(|c| !c.is_switching).count();
-        let mut top_tasks: Vec<usize> = available_tasks.into_iter().take(unlocked_cores).collect();
-
-        for i in 0..cores.len() {
-            if cores[i].is_switching { continue; }
-            if let Some(running) = cores[i].running_task {
-                if let Some(pos) = top_tasks.iter().position(|&t| t == running) {
+        for (i, core) in cores.iter().enumerate() {
+            if desired[i].is_some() { continue; }
+            if let Some(running) = core.running_task {
+                if let Some(best) = candidates.first().copied() {
+                    if best == running {
+                        desired[i] = Some(running);
+                        candidates.retain(|&x| x != running);
+                    } else {
+                        // Strict preemption condition for MLLF
+                        if tasks[best].laxity(current_time) < tasks[running].laxity(current_time) {
+                            desired[i] = Some(best);
+                            candidates.retain(|&x| x != best);
+                        } else {
+                            desired[i] = Some(running);
+                            candidates.retain(|&x| x != running);
+                        }
+                    }
+                } else {
                     desired[i] = Some(running);
-                    top_tasks.remove(pos);
                 }
-            }
-        }
-
-        // 4. Fill remaining idle cores
-        for i in 0..cores.len() {
-            if cores[i].is_switching || desired[i].is_some() { continue; }
-            // Using remove(0) keeps assigning the lowest laxity task first
-            if !top_tasks.is_empty() {
-                desired[i] = Some(top_tasks.remove(0));
             }
         }
 
@@ -199,96 +270,9 @@ impl Scheduler for Mllf {
 }
 
 // ==========================================
-// 4. PROPOSED HYBRID ALGORITHM
+// 4. PROPOSED HYBRID ALGORITHM (RELAX)
 // ==========================================
 pub struct ProposedAlgorithm;
-
-/// Safety margin for TTC comparisons.
-///
-/// The paper introduces δ_TTC but does not give a concrete numerical
-/// value. Therefore this must be supplied by the experiment/configuration.
-const TTC_MARGIN: f64 = 0.1;
-
-/// Relaxation tie-band ε_R.
-///
-/// The paper introduces ε_R but does not specify a numerical value.
-/// This is therefore an implementation parameter.
-const RELAXATION_TIE_BAND: f64 = 0.1;
-
-impl ProposedAlgorithm {
-    /// Calculate TTC from the task's obstacle distance and the current
-    /// environmental conditions.
-    fn task_ttc(
-        task: &Task,
-        config: &SimConfig,
-    ) -> f64 {
-        let d_eff =
-            crate::core::task::effective_distance(
-                task.obstacle_distance,
-                config.tightness,
-            );
-
-        crate::core::task::time_to_collision(
-            d_eff,
-            config.weather.lambda(),
-        )
-        .unwrap_or(crate::core::task::FALLBACK_TTC)
-    }
-
-    /// Returns true when `a` should be preferred to `b` according to
-    /// the paper's lexicographic comparison rules.
-    fn preferred(
-        a: &Task,
-        b: &Task,
-        a_relaxation: f64,
-        b_relaxation: f64,
-        current_time: f64,
-        config: &SimConfig,
-    ) -> bool {
-        let la = a.laxity(current_time);
-        let lb = b.laxity(current_time);
-
-        // Rule 1:
-        // A task with non-negative laxity is preferred to a task
-        // with negative laxity.
-        if la >= 0.0 && lb < 0.0 {
-            return true;
-        }
-
-        if la < 0.0 && lb >= 0.0 {
-            return false;
-        }
-
-        let ttc_a = Self::task_ttc(a, config);
-        let ttc_b = Self::task_ttc(b, config);
-
-        // Rule 2 from the paper:
-        //
-        // TTC_i + δ_TTC > TTC_j
-        //
-        // The paper defines this as a precedence rule independent
-        // of R. We reproduce that rule literally.
-        if ttc_a + TTC_MARGIN > ttc_b {
-            return true;
-        }
-
-        if ttc_b + TTC_MARGIN > ttc_a {
-            return false;
-        }
-
-        // Rule 3:
-        // If relaxation values are sufficiently close, use TTC
-        // as the deterministic tie-breaker.
-        if (a_relaxation - b_relaxation).abs()
-            <= RELAXATION_TIE_BAND
-        {
-            return ttc_a < ttc_b;
-        }
-
-        // Otherwise lower relaxation wins.
-        a_relaxation < b_relaxation
-    }
-}
 
 impl Scheduler for ProposedAlgorithm {
     fn schedule(
@@ -299,254 +283,127 @@ impl Scheduler for ProposedAlgorithm {
         current_time: f64,
         config: &SimConfig,
     ) -> Vec<Option<usize>> {
-        let mut desired = vec![None; cores.len()];
-
-        /*
-         * Tasks currently undergoing a context switch cannot be changed.
-         * They are also not considered candidates for another core.
-         */
-        let mut available_tasks = Vec::new();
-
+        let mut ready_candidates = Vec::new();
         for &idx in ready_queue {
-            let mut assigned_to_switching_core = false;
-
+            let mut assigned = false;
             for core in cores {
-                if core.is_switching
-                    && core.running_task == Some(idx)
-                {
-                    assigned_to_switching_core = true;
+                if core.is_switching && core.running_task == Some(idx) {
+                    assigned = true;
                     break;
                 }
             }
-
-            if !assigned_to_switching_core {
-                available_tasks.push(idx);
+            if !assigned {
+                ready_candidates.push(idx);
             }
         }
 
-        /*
-         * Negative-laxity tasks should not be selected.
-         *
-         * The simulator also drops these tasks from the ready queue,
-         * but filtering here makes the scheduler safe independently.
-         */
-        available_tasks.retain(|&idx| {
-            tasks[idx].laxity(current_time) >= 0.0
-        });
+        // Proactive Drop: Filter out tasks locked in an unschedulable state
+        ready_candidates.retain(|&idx| tasks[idx].laxity(current_time) >= 0.0);
 
-        if available_tasks.is_empty() {
-            for (i, core) in cores.iter().enumerate() {
-                if core.is_switching {
-                    desired[i] = core.running_task;
-                } else {
-                    desired[i] = core.running_task;
+        let mut available_tasks = ready_candidates;
+        
+        // Add existing running tasks to pool
+        for core in cores {
+            if !core.is_switching {
+                if let Some(idx) = core.running_task {
+                    if !available_tasks.contains(&idx) {
+                        available_tasks.push(idx);
+                    }
                 }
             }
+        }
 
+        if available_tasks.is_empty() {
+            let mut desired = vec![None; cores.len()];
+            for (i, core) in cores.iter().enumerate() {
+                desired[i] = core.running_task;
+            }
             return desired;
         }
 
-        /*
-         * ------------------------------------------------------------
-         * 1. Calculate laxities
-         * ------------------------------------------------------------
-         */
-        let laxities: Vec<f64> = available_tasks
-            .iter()
-            .map(|&idx| tasks[idx].laxity(current_time))
-            .collect();
+        // 1. Calculate & Normalize laxities over current pool dynamically
+        let laxities: Vec<f64> = available_tasks.iter().map(|&idx| tasks[idx].laxity(current_time)).collect();
+        let l_min = laxities.iter().copied().fold(f64::INFINITY, f64::min);
+        let l_max = laxities.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let mut span = l_max - l_min;
+        if span < 1e-9 { span = 1e-9; }
 
-        /*
-         * ------------------------------------------------------------
-         * 2. Normalize laxities to the priority scale
-         * ------------------------------------------------------------
-         */
-        let normalized = normalize_laxities(&laxities);
+        // 2. Base configuration constants
+        let theta = 4.0;
+        let mut rvals = HashMap::new();
+        
+        for (i, &idx) in available_tasks.iter().enumerate() {
+            let l_norm = ((laxities[i] - l_min) / span) * 5.0;
+            let r = theta * l_norm + (tasks[idx].priority as f64);
+            rvals.insert(idx, r);
+        }
 
-        let theta_value =
-            theta(config.weather.lambda());
+        // 3. Sort using paper's lexicographic comparison rules
+        available_tasks.sort_by(|&a_idx, &b_idx| {
+            let r_a = rvals[&a_idx];
+            let r_b = rvals[&b_idx];
 
-        /*
-         * ------------------------------------------------------------
-         * 3. Calculate relaxation
-         * ------------------------------------------------------------
-         */
-        let mut ranked: Vec<(usize, f64)> = available_tasks
-            .iter()
-            .enumerate()
-            .map(|(i, &idx)| {
-                let r = relaxation(
-                    theta_value,
-                    normalized[i],
-                    tasks[idx].priority as f64,
-                );
-
-                (idx, r)
-            })
-            .collect();
-
-        /*
-         * ------------------------------------------------------------
-         * 4. Sort using the paper's comparison rules
-         * ------------------------------------------------------------
-         */
-        ranked.sort_by(|(idx_a, r_a), (idx_b, r_b)| {
-            if *idx_a == *idx_b {
-                return std::cmp::Ordering::Equal;
+            if (r_a - r_b).abs() <= 0.5 {
+                let ttc_a = tasks[a_idx].deadline - tasks[a_idx].arrival_time;
+                let ttc_b = tasks[b_idx].deadline - tasks[b_idx].arrival_time;
+                
+                if ttc_b - ttc_a > 0.5 { return std::cmp::Ordering::Less; }
+                if ttc_a - ttc_b > 0.5 { return std::cmp::Ordering::Greater; }
+                
+                if r_a != r_b {
+                    return if r_a < r_b { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+                }
+                return a_idx.cmp(&b_idx);
             }
-
-            if Self::preferred(
-                &tasks[*idx_a],
-                &tasks[*idx_b],
-                *r_a,
-                *r_b,
-                current_time,
-                config,
-            ) {
-                std::cmp::Ordering::Less
-            } else {
-                std::cmp::Ordering::Greater
-            }
+            
+            if r_a < r_b { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }
         });
 
-        let mut candidates: Vec<usize> =
-            ranked.into_iter().map(|(idx, _)| idx).collect();
+        let mut candidates = available_tasks;
+        let mut desired = vec![None; cores.len()];
 
-        /*
-         * ------------------------------------------------------------
-         * 5. Preserve tasks already running when appropriate,
-         *    otherwise apply the paper's preemption condition.
-         * ------------------------------------------------------------
-         */
-        for core_idx in 0..cores.len() {
-            if cores[core_idx].is_switching {
-                desired[core_idx] =
-                    cores[core_idx].running_task;
-                continue;
-            }
-
-            let running_idx =
-                cores[core_idx].running_task;
-
-            match running_idx {
-                None => {
-                    /*
-                     * Idle core:
-                     *
-                     * Algorithm 1 says to assign the task with minimum
-                     * relaxation.
-                     */
-                    if let Some(next) = candidates.first().copied() {
-                        desired[core_idx] = Some(next);
-
-                        candidates.retain(|&x| x != next);
-                    }
-                }
-
-                Some(running) => {
-                    /*
-                     * If the currently running task is not in the
-                     * waiting candidates, simply keep it.
-                     */
-                    let best =
-                        candidates.first().copied();
-
-                    match best {
-                        None => {
-                            desired[core_idx] =
-                                Some(running);
-                        }
-
-                        Some(candidate) if candidate == running => {
-                            desired[core_idx] =
-                                Some(running);
-
-                            candidates.retain(
-                                |&x| x != running
-                            );
-                        }
-
-                        Some(candidate) => {
-                            let candidate_laxity =
-                                tasks[candidate]
-                                    .laxity(current_time);
-
-                            /*
-                             * Equation (8):
-                             *
-                             * L(candidate) >=
-                             * C_remaining(running) + 2a
-                             *
-                             * means DON'T preempt.
-                             *
-                             * Therefore preemption is allowed only when:
-                             *
-                             * L(candidate) <
-                             * C_remaining(running) + 2a
-                             */
-                            let preemption_threshold =
-                                tasks[running].remaining_time
-                                    + 2.0
-                                        * config
-                                            .context_switch_cost;
-
-                            /*
-                             * TTC margin / relaxation tie-band have
-                             * already been incorporated into the
-                             * candidate ordering.
-                             */
-                            if candidate_laxity
-                                < preemption_threshold
-                            {
-                                /*
-                                 * Preempt running task.
-                                 *
-                                 * The simulator keeps the preempted
-                                 * task in ready_queue, so it becomes
-                                 * eligible again on the next decision.
-                                 */
-                                desired[core_idx] =
-                                    Some(candidate);
-
-                                candidates.retain(
-                                    |&x| x != candidate
-                                );
-                            } else {
-                                /*
-                                 * Non-preemption condition satisfied.
-                                 */
-                                desired[core_idx] =
-                                    Some(running);
-
-                                candidates.retain(
-                                    |&x| x != running
-                                );
-                            }
-                        }
-                    }
+        // 4. Pass 1: Locked states (context switches)
+        for (i, core) in cores.iter().enumerate() {
+            if core.is_switching {
+                desired[i] = core.running_task;
+                if let Some(t) = core.running_task {
+                    candidates.retain(|&x| x != t);
                 }
             }
         }
 
-        /*
-         * ------------------------------------------------------------
-         * 6. Fill any remaining idle cores
-         * ------------------------------------------------------------
-         */
-        for core_idx in 0..cores.len() {
-            if cores[core_idx].is_switching {
-                continue;
+        // 5. Pass 2: Assign idle cores
+        for (i, core) in cores.iter().enumerate() {
+            if !core.is_switching && core.running_task.is_none() {
+                if let Some(next) = candidates.first().copied() {
+                    desired[i] = Some(next);
+                    candidates.retain(|&x| x != next);
+                }
             }
+        }
 
-            if desired[core_idx].is_none() {
-                if let Some(next) =
-                    candidates.first().copied()
-                {
-                    desired[core_idx] = Some(next);
+        // 6. Pass 3: Evaluate Preemptions (Gated)
+        for (i, core) in cores.iter().enumerate() {
+            if desired[i].is_some() { continue; }
+            if let Some(running) = core.running_task {
+                if let Some(best) = candidates.first().copied() {
+                    if best == running {
+                        desired[i] = Some(running);
+                        candidates.retain(|&x| x != running);
+                    } else {
+                        let candidate_laxity = tasks[best].laxity(current_time);
+                        let preemption_threshold = tasks[running].remaining_time + 2.0 * config.context_switch_cost;
 
-                    candidates.retain(
-                        |&x| x != next
-                    );
+                        if candidate_laxity < preemption_threshold {
+                            desired[i] = Some(best);
+                            candidates.retain(|&x| x != best);
+                        } else {
+                            desired[i] = Some(running);
+                            candidates.retain(|&x| x != running);
+                        }
+                    }
+                } else {
+                    desired[i] = Some(running);
                 }
             }
         }
@@ -555,71 +412,11 @@ impl Scheduler for ProposedAlgorithm {
     }
 }
 
+
+// ==========================================
+// 5. PROPOSED HYBRID ALGORITHM (RELAX_ENV)
+// ==========================================
 pub struct EnvProposedAlgorithm;
-
-impl EnvProposedAlgorithm {
-    /// Safety margin for TTC comparisons.
-    const TTC_MARGIN: f64 = 0.1;
-
-    /// Relaxation tie-band ε_R.
-    const RELAXATION_TIE_BAND: f64 = 0.1;
-
-    /// Calculate TTC from the task's obstacle distance and the current
-    /// environmental conditions.
-    fn task_ttc(task: &Task, config: &SimConfig) -> f64 {
-        let d_eff = crate::core::task::effective_distance(
-            task.obstacle_distance,
-            config.tightness,
-        );
-
-        let lambda_val = f64::from(config.weather.lambda());
-
-        crate::core::task::time_to_collision(
-            d_eff,
-            lambda_val,
-        )
-        .unwrap_or(crate::core::task::FALLBACK_TTC)
-    }
-
-    /// Calculates the dynamic priority P_i(λ) based on the environment.
-    /// Expects (base_priority: f64, lambda: u8).
-    fn dynamic_priority(base_priority: f64, lambda: f64) -> f64 {
-    base_priority * (1.0 + lambda)
-}
-
-    /// Returns true when `a` should be preferred to `b` according to
-    /// the paper's lexicographic comparison rules.
-    fn preferred(
-        a: &Task,
-        b: &Task,
-        a_relaxation: f64,
-        b_relaxation: f64,
-        current_time: f64,
-        config: &SimConfig,
-    ) -> bool {
-        let la = a.laxity(current_time);
-        let lb = b.laxity(current_time);
-
-        // Rule 1: Non-negative laxity preferred over negative laxity
-        if la >= 0.0 && lb < 0.0 { return true; }
-        if la < 0.0 && lb >= 0.0 { return false; }
-
-        let ttc_a = Self::task_ttc(a, config);
-        let ttc_b = Self::task_ttc(b, config);
-
-        // Rule 2: TTC precedence independent of Relaxation
-        if ttc_a + Self::TTC_MARGIN > ttc_b { return true; }
-        if ttc_b + Self::TTC_MARGIN > ttc_a { return false; }
-
-        // Rule 3: Tie-breaker using TTC if relaxation values are close
-        if (a_relaxation - b_relaxation).abs() <= Self::RELAXATION_TIE_BAND {
-            return ttc_a < ttc_b;
-        }
-
-        // Otherwise lower relaxation wins
-        a_relaxation < b_relaxation
-    }
-}
 
 impl Scheduler for EnvProposedAlgorithm {
     fn schedule(
@@ -630,124 +427,128 @@ impl Scheduler for EnvProposedAlgorithm {
         current_time: f64,
         config: &SimConfig,
     ) -> Vec<Option<usize>> {
-        let mut desired = vec![None; cores.len()];
-        let mut available_tasks = Vec::new();
-
-        // Filter out tasks currently undergoing a context switch
+        let mut ready_candidates = Vec::new();
         for &idx in ready_queue {
-            let mut assigned_to_switching_core = false;
+            let mut assigned = false;
             for core in cores {
                 if core.is_switching && core.running_task == Some(idx) {
-                    assigned_to_switching_core = true;
+                    assigned = true;
                     break;
                 }
             }
-            if !assigned_to_switching_core {
-                available_tasks.push(idx);
+            if !assigned {
+                ready_candidates.push(idx);
             }
         }
 
-        // Drop tasks with negative laxity
-        available_tasks.retain(|&idx| tasks[idx].laxity(current_time) >= 0.0);
+        // Proactive drop for Env-variant
+        ready_candidates.retain(|&idx| tasks[idx].laxity(current_time) >= 0.0);
+
+        let mut available_tasks = ready_candidates;
+        for core in cores {
+            if !core.is_switching {
+                if let Some(idx) = core.running_task {
+                    if !available_tasks.contains(&idx) {
+                        available_tasks.push(idx);
+                    }
+                }
+            }
+        }
 
         if available_tasks.is_empty() {
+            let mut desired = vec![None; cores.len()];
             for (i, core) in cores.iter().enumerate() {
                 desired[i] = core.running_task;
             }
             return desired;
         }
 
-        // 1. Calculate and normalize laxities
-        let laxities: Vec<f64> = available_tasks
-            .iter()
-            .map(|&idx| tasks[idx].laxity(current_time))
-            .collect();
+        let laxities: Vec<f64> = available_tasks.iter().map(|&idx| tasks[idx].laxity(current_time)).collect();
+        let l_min = laxities.iter().copied().fold(f64::INFINITY, f64::min);
+        let l_max = laxities.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let mut span = l_max - l_min;
+        if span < 1e-9 { span = 1e-9; }
 
-        let normalized = normalize_laxities(&laxities);
-        let theta_value = theta(f64::from(config.weather.lambda()));
+        let mut rvals = HashMap::new();
+        let lambda = f64::from(config.weather.lambda());
+        let theta = 1.5 + lambda;
 
-        // 2. Calculate Environment-Aware Relaxation
-        let mut ranked: Vec<(usize, f64)> = available_tasks
-            .iter()
-            .enumerate()
-            .map(|(i, &idx)| {
-                // Ensure correct argument ordering matching dynamic_priority(f64, u8)
-                let base_p = f64::from(tasks[idx].priority);
-                let env_priority = Self::dynamic_priority(
-                    base_p, 
-                    config.weather.lambda()
-                );
-
-                // R_i(λ) = θ(λ) * L_i + P_i(λ)
-                let r = relaxation(
-                    theta_value,
-                    normalized[i],
-                    env_priority,
-                );
-
-                (idx, r)
-            })
-            .collect();
-
-        // 3. Sort using lexicographic comparison rules
-        ranked.sort_by(|(idx_a, r_a), (idx_b, r_b)| {
-            if *idx_a == *idx_b { return std::cmp::Ordering::Equal; }
-
-            if Self::preferred(&tasks[*idx_a], &tasks[*idx_b], *r_a, *r_b, current_time, config) {
-                std::cmp::Ordering::Less
-            } else {
-                std::cmp::Ordering::Greater
+        for (i, &idx) in available_tasks.iter().enumerate() {
+            let l_norm = ((laxities[i] - l_min) / span) * 5.0;
+            
+            // Dynamic Priority adjustment (P_i) based on environment
+            let mut p = tasks[idx].priority as f64;
+            if lambda > 0.0 && tasks[idx].obstacle_distance < 100.0 {
+                let shift = if (lambda - 0.3).abs() < 0.1 { 1.0 } else { 2.0 };
+                p -= shift;
+                if p < 1.0 { p = 1.0; }
             }
+
+            let r = theta * l_norm + p;
+            rvals.insert(idx, r);
+        }
+
+        available_tasks.sort_by(|&a_idx, &b_idx| {
+            let r_a = rvals[&a_idx];
+            let r_b = rvals[&b_idx];
+
+            if (r_a - r_b).abs() <= 0.5 {
+                let ttc_a = tasks[a_idx].deadline - tasks[a_idx].arrival_time;
+                let ttc_b = tasks[b_idx].deadline - tasks[b_idx].arrival_time;
+                
+                if ttc_b - ttc_a > 0.5 { return std::cmp::Ordering::Less; }
+                if ttc_a - ttc_b > 0.5 { return std::cmp::Ordering::Greater; }
+                
+                if r_a != r_b {
+                    return if r_a < r_b { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+                }
+                return a_idx.cmp(&b_idx);
+            }
+            if r_a < r_b { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }
         });
 
-        let mut candidates: Vec<usize> = ranked.into_iter().map(|(idx, _)| idx).collect();
+        let mut candidates = available_tasks;
+        let mut desired = vec![None; cores.len()];
 
-        // 4. Preemption & Assignment Logic
-        for core_idx in 0..cores.len() {
-            if cores[core_idx].is_switching {
-                desired[core_idx] = cores[core_idx].running_task;
-                continue;
-            }
-
-            match cores[core_idx].running_task {
-                None => {
-                    if let Some(next) = candidates.first().copied() {
-                        desired[core_idx] = Some(next);
-                        candidates.retain(|&x| x != next);
-                    }
-                }
-                Some(running) => {
-                    match candidates.first().copied() {
-                        None => desired[core_idx] = Some(running),
-                        Some(candidate) if candidate == running => {
-                            desired[core_idx] = Some(running);
-                            candidates.retain(|&x| x != running);
-                        }
-                        Some(candidate) => {
-                            let candidate_laxity = tasks[candidate].laxity(current_time);
-                            let preemption_threshold = tasks[running].remaining_time 
-                                + 2.0 * config.context_switch_cost;
-
-                            // Allow preemption only if candidate laxity < C_remaining(running) + 2a
-                            if candidate_laxity < preemption_threshold {
-                                desired[core_idx] = Some(candidate);
-                                candidates.retain(|&x| x != candidate);
-                            } else {
-                                desired[core_idx] = Some(running);
-                                candidates.retain(|&x| x != running);
-                            }
-                        }
-                    }
+        for (i, core) in cores.iter().enumerate() {
+            if core.is_switching {
+                desired[i] = core.running_task;
+                if let Some(t) = core.running_task {
+                    candidates.retain(|&x| x != t);
                 }
             }
         }
 
-        // 5. Fill remaining idle cores
-        for core_idx in 0..cores.len() {
-            if !cores[core_idx].is_switching && desired[core_idx].is_none() {
+        for (i, core) in cores.iter().enumerate() {
+            if !core.is_switching && core.running_task.is_none() {
                 if let Some(next) = candidates.first().copied() {
-                    desired[core_idx] = Some(next);
+                    desired[i] = Some(next);
                     candidates.retain(|&x| x != next);
+                }
+            }
+        }
+
+        for (i, core) in cores.iter().enumerate() {
+            if desired[i].is_some() { continue; }
+            if let Some(running) = core.running_task {
+                if let Some(best) = candidates.first().copied() {
+                    if best == running {
+                        desired[i] = Some(running);
+                        candidates.retain(|&x| x != running);
+                    } else {
+                        let candidate_laxity = tasks[best].laxity(current_time);
+                        let preemption_threshold = tasks[running].remaining_time + 2.0 * config.context_switch_cost;
+
+                        if candidate_laxity < preemption_threshold {
+                            desired[i] = Some(best);
+                            candidates.retain(|&x| x != best);
+                        } else {
+                            desired[i] = Some(running);
+                            candidates.retain(|&x| x != running);
+                        }
+                    }
+                } else {
+                    desired[i] = Some(running);
                 }
             }
         }
@@ -757,10 +558,8 @@ impl Scheduler for EnvProposedAlgorithm {
 }
 
 
-
-
 // ==========================================
-// 5. RUNTIME SCHEDULER SELECTION
+// 6. RUNTIME SCHEDULER SELECTION
 // ==========================================
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedulerKind {
